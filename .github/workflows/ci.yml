@@ -11,14 +11,17 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # A fixed Rust, so a new stable's new lints cannot fail a release; bump it on purpose.
+  RUST_TOOLCHAIN: "1.99.1"
 
 jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy, rustfmt
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --features wasm-exports -- -D warnings
@@ -32,8 +35,9 @@ jobs:
         working-directory: js
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32-unknown-unknown
       - uses: actions/setup-node@v4
         with:
