@@ -131,6 +131,25 @@ test('unsupported options throw', async () => {
   assert.throws(() => states.codeToTokens('y', { lang: 'python', theme: 'nord', grammarState }), /is not supported/);
 });
 
+test('loading a loaded theme again keeps its wasm highlighters', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const dist = new URL('../dist/', import.meta.url);
+  const core = await rill.createHighlightCore({
+    wasm: readFile(new URL('rill_highlight.wasm', dist)),
+    data: { grammar: (name) => readFile(new URL(`grammars/${name}.json`, dist), 'utf8'), theme: (name) => readFile(new URL(`themes/${name}.json`, dist), 'utf8') },
+  });
+  let created = 0;
+  const newHighlighter = core.binding.newHighlighter;
+  core.binding.newHighlighter = (...args) => (created++, newHighlighter(...args));
+  const h = await core.createHighlighter({ themes: ['nord'], langs: ['python'] });
+  for (let i = 0; i < 3; i++) {
+    await h.loadTheme('nord');
+    await h.loadLanguage('python');
+    h.codeToHtml('x = 1', { lang: 'python', theme: 'nord' });
+  }
+  assert.equal(created, 1);
+});
+
 let failed = 0;
 for (const { name, run } of cases) {
   try {

@@ -201,10 +201,10 @@ export async function createHighlighterWithCore(core, options = {}) {
   };
 
   // Themes.
-  const registerTheme = (json) => {
+  const registerTheme = (json, bundled) => {
     const [handle, [name, type, fg, bg, colorReplacements]] = binding.newTheme(json);
     themeHandles.push(handle);
-    const record = { name, type, fg, bg, colorReplacements, handle };
+    const record = { name, type, fg, bg, colorReplacements, handle, bundled };
     if (name) themes.set(name, record);
     return record;
   };
@@ -219,6 +219,7 @@ export async function createHighlighterWithCore(core, options = {}) {
   function getTheme(name) {
     if (isNoneTheme(name)) return NONE_THEME;
     ensureNotDisposed();
+    if (name === undefined || name === null) throw new ShikiError(`Theme \`${name}\` not found, you may need to load it first`);
     if (typeof name !== 'string') return themeRecordOfObject(name);
     const record = themes.get(name);
     if (!record) throw new ShikiError(`Theme \`${name}\` not found, you may need to load it first`);
@@ -231,7 +232,9 @@ export async function createHighlighterWithCore(core, options = {}) {
         if (isNoneTheme(theme)) return null;
         if (typeof theme === 'string') {
           if (!manifest.themes.includes(theme)) throw new ShikiError(`Theme \`${theme}\` is not included in this bundle. You may want to load it from external source.`);
-          return { json: await core.themeText(theme) };
+          // Loading a bundled theme again changes nothing (and keeps its wasm highlighters).
+          if (themes.get(theme)?.bundled === theme) return null;
+          return { json: await core.themeText(theme), bundled: theme };
         }
         const value = typeof theme === 'function' ? await theme() : await theme;
         return { object: value.default || value };
@@ -240,7 +243,7 @@ export async function createHighlighterWithCore(core, options = {}) {
     ensureNotDisposed();
     for (const theme of loaded) {
       if (!theme) continue;
-      if (theme.json !== undefined) registerTheme(theme.json);
+      if (theme.json !== undefined) registerTheme(theme.json, theme.bundled);
       else themeRecordOfObject(theme.object);
     }
   }
@@ -566,7 +569,7 @@ export async function createHighlighterWithCore(core, options = {}) {
     loadLanguage,
     loadTheme,
     getTheme: (name) => {
-      const { handle, ...theme } = getTheme(name);
+      const { handle, bundled, ...theme } = getTheme(name);
       return theme;
     },
     getLoadedThemes,
