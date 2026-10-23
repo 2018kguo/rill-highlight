@@ -26,8 +26,8 @@ same growing code block many times a second.
   only, three themes, `light-dark()`, the whitespace and merge options,
   `structure: 'inline'` and `tokenizeMaxLineLength`. Streaming the first 150
   lines of each file through the Streamdown plugin, 32,320 calls, matches
-  `@streamdown/code`, and 241 of 242 bundled languages match on a mixed
-  sample (the other is a Shiki quirk, see [Limits](#limits)).
+  `@streamdown/code`, and 240 of 242 bundled languages match on a mixed
+  sample (the other two are a Shiki quirk, see [Limits](#limits)).
 - **Faster.** In Node, 4.6x faster than Shiki at `codeToTokens`, 4.9x at
   `codeToHtml` and 5.5x to the first result, and in Chromium 5x to 6x on
   streamed and freshly loaded answers (numbers under
@@ -217,7 +217,9 @@ grammars of several languages for injections and embedded languages, and
 - **One Shiki quirk.** On the mixed sample of the all-languages test, Shiki's
   first tokenization with a fresh C++ grammar misses a string that its later
   tokenizations (and rill-highlight) find; with two themes, Shiki's light and
-  dark tokens disagree there.
+  dark tokens disagree there. Its Emacs Lisp tokens disagree the same way on
+  one line (with Node 25.9; rill-highlight's tokens are the same in both
+  themes).
 - **Grammar states** come from the highlighter and the themes that produced
   them; passing one to a call with other themes throws.
 - **Loading after use.** Like Shiki, loading a language reloads the
