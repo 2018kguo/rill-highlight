@@ -5,6 +5,7 @@
 mod charset;
 mod compile;
 mod parse;
+#[rustfmt::skip]
 mod unicode_tables;
 mod vm;
 
@@ -67,18 +68,21 @@ impl JsRegExp {
 
     /// Whether a search result can be reused for later start positions on the same
     /// string (Shiki's `isSearchCacheable`).
+    #[must_use]
     pub fn is_search_cacheable(&self) -> bool {
         !self.sticky && !self.clip_search
     }
 
     /// `exec` with `lastIndex = start`. On a match, `result` holds start/end pairs
     /// for group 0 and each visible group (-1 for groups that did not participate).
+    #[must_use]
     pub fn exec(&self, matcher: &mut Matcher, input: &[u16], start: usize, raw: &mut Vec<i32>, result: &mut Vec<i32>) -> bool {
         self.exec_bounded(matcher, input, start, usize::MAX, raw, result)
     }
 
     /// `exec`, but only looking for matches that start at or before `limit`: false
     /// means no match starts in `start..=limit`.
+    #[must_use]
     pub fn exec_bounded(&self, matcher: &mut Matcher, input: &[u16], start: usize, limit: usize, raw: &mut Vec<i32>, result: &mut Vec<i32>) -> bool {
         let offset = if self.clip_search && start > 0 { start.min(input.len()) } else { 0 };
         let found = if offset > 0 {

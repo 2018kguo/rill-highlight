@@ -3,8 +3,8 @@
 //! character set is closed under simple case folding, so matching never folds.
 
 use super::charset::{self, CharSet};
-use std::cell::RefCell;
 use crate::fxhash::FxHashMap as HashMap;
+use std::cell::RefCell;
 
 thread_local! {
     static CLASS_CACHE: RefCell<HashMap<(String, bool, bool), CharSet>> = RefCell::new(HashMap::default());
@@ -17,14 +17,29 @@ pub enum Node {
     Set(CharSet),
     Seq(Vec<Node>),
     Alt(Vec<Node>),
-    Capture { index: u32, body: Box<Node> },
-    Look { behind: bool, negate: bool, body: Box<Node> },
+    Capture {
+        index: u32,
+        body: Box<Node>,
+    },
+    Look {
+        behind: bool,
+        negate: bool,
+        body: Box<Node>,
+    },
     /// Matches `body` once without backtracking into it: oniguruma-to-es's
     /// `(?=(body))\1` emulation of atomic groups, recognized after parsing.
     Atomic(Box<Node>),
-    Repeat { min: u32, max: u32, greedy: bool, body: Box<Node> },
+    Repeat {
+        min: u32,
+        max: u32,
+        greedy: bool,
+        body: Box<Node>,
+    },
     /// Matches what the first participating group of `groups` captured.
-    Backref { groups: Vec<u32>, ignore_case: bool },
+    Backref {
+        groups: Vec<u32>,
+        ignore_case: bool,
+    },
     Assert(Assertion),
 }
 
@@ -35,8 +50,12 @@ pub enum Assertion {
     LineStart,
     LineEnd,
     /// `\b`; `extended` adds U+017F and U+212A to the word characters (`i` with `u`/`v`).
-    WordBoundary { extended: bool },
-    NotWordBoundary { extended: bool },
+    WordBoundary {
+        extended: bool,
+    },
+    NotWordBoundary {
+        extended: bool,
+    },
 }
 
 pub const UNBOUNDED: u32 = u32::MAX;
@@ -81,16 +100,8 @@ pub fn parse_with_placeholders(pattern: &str, flags: &str, values: Option<&[Vec<
     }
     let chars: Vec<char> = pattern.chars().collect();
     let names = scan_groups(&chars);
-    let mut parser = Parser {
-        chars,
-        pos: 0,
-        modes,
-        unicode_sets,
-        ignore_case_flag: modes.ignore_case,
-        next_group: 1,
-        group_names: names,
-        placeholder_values: values,
-    };
+    let mut parser =
+        Parser { chars, pos: 0, modes, unicode_sets, ignore_case_flag: modes.ignore_case, next_group: 1, group_names: names, placeholder_values: values };
     let node = parser.parse_disjunction()?;
     if parser.pos != parser.chars.len() {
         return Err(format!("unexpected ')' at {}", parser.pos));
@@ -102,19 +113,17 @@ pub fn parse_with_placeholders(pattern: &str, flags: &str, values: Option<&[Vec<
 fn scan_groups(chars: &[char]) -> Vec<Option<String>> {
     let mut names = Vec::new();
     let mut class_depth = 0usize;
-    let mut i = 0;
-    while i < chars.len() {
-        match chars[i] {
-            '\\' => i += 1,
+    let mut index = 0;
+    while index < chars.len() {
+        match chars[index] {
+            '\\' => index += 1,
             '[' => class_depth += 1,
             ']' if class_depth > 0 => class_depth -= 1,
             '(' if class_depth == 0 => {
-                if chars.get(i + 1) != Some(&'?') {
+                if chars.get(index + 1) != Some(&'?') {
                     names.push(None);
-                } else if chars.get(i + 2) == Some(&'<')
-                    && !matches!(chars.get(i + 3), Some('=') | Some('!'))
-                {
-                    let start = i + 3;
+                } else if chars.get(index + 2) == Some(&'<') && !matches!(chars.get(index + 3), Some('=') | Some('!')) {
+                    let start = index + 3;
                     let mut end = start;
                     while end < chars.len() && chars[end] != '>' {
                         end += 1;
@@ -124,7 +133,7 @@ fn scan_groups(chars: &[char]) -> Vec<Option<String>> {
             }
             _ => {}
         }
-        i += 1;
+        index += 1;
     }
     names
 }
@@ -168,7 +177,7 @@ impl Parser<'_> {
         while self.eat('|') {
             alternatives.push(self.parse_alternative()?);
         }
-        Ok(if alternatives.len() == 1 { alternatives.pop().unwrap() } else { Node::Alt(alternatives) })
+        Ok(if alternatives.len() == 1 { alternatives.pop().expect("one alternative") } else { Node::Alt(alternatives) })
     }
 
     fn parse_alternative(&mut self) -> Result<Node, String> {
@@ -181,39 +190,27 @@ impl Parser<'_> {
         }
         Ok(match terms.len() {
             0 => Node::Empty,
-            1 => terms.pop().unwrap(),
+            1 => terms.pop().expect("one term"),
             _ => Node::Seq(terms),
         })
     }
 
     fn parse_term(&mut self) -> Result<Node, String> {
-        let c = self.peek().unwrap();
-        match c {
+        let character = self.peek().expect("checked not at the end");
+        match character {
             '^' => {
                 self.pos += 1;
-                return Ok(Node::Assert(if self.modes.multiline {
-                    Assertion::LineStart
-                } else {
-                    Assertion::InputStart
-                }));
+                return Ok(Node::Assert(if self.modes.multiline { Assertion::LineStart } else { Assertion::InputStart }));
             }
             '$' => {
                 self.pos += 1;
-                return Ok(Node::Assert(if self.modes.multiline {
-                    Assertion::LineEnd
-                } else {
-                    Assertion::InputEnd
-                }));
+                return Ok(Node::Assert(if self.modes.multiline { Assertion::LineEnd } else { Assertion::InputEnd }));
             }
             '\\' if matches!(self.peek_at(1), Some('b') | Some('B')) => {
                 let negate = self.peek_at(1) == Some('B');
                 self.pos += 2;
                 let extended = self.modes.ignore_case;
-                return Ok(Node::Assert(if negate {
-                    Assertion::NotWordBoundary { extended }
-                } else {
-                    Assertion::WordBoundary { extended }
-                }));
+                return Ok(Node::Assert(if negate { Assertion::NotWordBoundary { extended } } else { Assertion::WordBoundary { extended } }));
             }
             '(' if self.peek_at(1) == Some('?') => {
                 let look = match (self.peek_at(2), self.peek_at(3)) {
@@ -251,15 +248,15 @@ impl Parser<'_> {
 
     fn try_placeholder(&mut self) -> Option<Vec<Node>> {
         let values = self.placeholder_values?;
-        let c = self.peek()? as u32;
-        if !(0xE000..=0xE8FF).contains(&c) {
+        let code_point = self.peek()? as u32;
+        if !(0xE000..=0xE8FF).contains(&code_point) {
             return None;
         }
         self.pos += 1;
-        let text = values.get((c - 0xE000) as usize).map_or(&[][..], |v| v.as_slice());
+        let text = values.get((code_point - 0xE000) as usize).map_or(&[][..], |v| v.as_slice());
         let chars = char::decode_utf16(text.iter().copied())
             .map(|r| r.map_or_else(|e| u32::from(e.unpaired_surrogate()), u32::from))
-            .map(|c| Node::Set(self.literal_set(c)))
+            .map(|code_point| Node::Set(self.literal_set(code_point)))
             .collect();
         Some(chars)
     }
@@ -318,15 +315,11 @@ impl Parser<'_> {
     }
 
     fn parse_atom(&mut self) -> Result<Node, String> {
-        let c = self.peek().unwrap();
-        match c {
+        let character = self.peek().expect("checked not at the end");
+        match character {
             '.' => {
                 self.pos += 1;
-                Ok(Node::Set(if self.modes.dot_all {
-                    CharSet::all()
-                } else {
-                    line_terminators().complement()
-                }))
+                Ok(Node::Set(if self.modes.dot_all { CharSet::all() } else { line_terminators().complement() }))
             }
             '(' => self.parse_group(),
             '[' => {
@@ -335,10 +328,11 @@ impl Parser<'_> {
                 let end = self.class_end();
                 let key: Option<(String, bool, bool)> = end.map(|end| (self.chars[self.pos..end].iter().collect(), self.modes.ignore_case, self.unicode_sets));
                 if let Some(key) = &key
-                    && let Some(set) = CLASS_CACHE.with_borrow(|cache| cache.get(key).cloned()) {
-                        self.pos = end.unwrap();
-                        return Ok(Node::Set(set));
-                    }
+                    && let Some(set) = CLASS_CACHE.with_borrow(|cache| cache.get(key).cloned())
+                {
+                    self.pos = end.expect("found the end");
+                    return Ok(Node::Set(set));
+                }
                 self.pos += 1;
                 let set = if self.unicode_sets { self.parse_class_v()? } else { self.parse_class_u()? };
                 if let Some(key) = key {
@@ -355,12 +349,10 @@ impl Parser<'_> {
                 self.pos += 1;
                 self.parse_atom_escape()
             }
-            ')' | '*' | '+' | '?' | '{' | '}' | ']' | '|' => {
-                Err(format!("unexpected '{c}' at {}", self.pos))
-            }
+            ')' | '*' | '+' | '?' | '{' | '}' | ']' | '|' => Err(format!("unexpected '{character}' at {}", self.pos)),
             _ => {
                 self.pos += 1;
-                Ok(Node::Set(self.literal_set(c as u32)))
+                Ok(Node::Set(self.literal_set(character as u32)))
             }
         }
     }
@@ -369,20 +361,20 @@ impl Parser<'_> {
     /// skipping escapes and nested classes (`v` mode).
     fn class_end(&self) -> Option<usize> {
         let mut depth = 0usize;
-        let mut i = self.pos;
-        while i < self.chars.len() {
-            match self.chars[i] {
-                '\\' => i += 1,
+        let mut index = self.pos;
+        while index < self.chars.len() {
+            match self.chars[index] {
+                '\\' => index += 1,
                 '[' if depth == 0 || self.unicode_sets => depth += 1,
                 ']' => {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(i + 1);
+                        return Some(index + 1);
                     }
                 }
                 _ => {}
             }
-            i += 1;
+            index += 1;
         }
         None
     }
@@ -439,7 +431,7 @@ impl Parser<'_> {
         let Some(c) = self.peek() else { return Err("trailing backslash".into()) };
         match c {
             '1'..='9' => {
-                let number = self.parse_decimal().unwrap();
+                let number = self.parse_decimal().expect("starts with a digit");
                 if number >= self.next_group_total() {
                     return Err(format!("invalid backreference \\{number}"));
                 }
@@ -454,13 +446,8 @@ impl Parser<'_> {
                 }
                 let name: String = self.chars[start..self.pos].iter().collect();
                 self.expect('>')?;
-                let groups: Vec<u32> = self
-                    .group_names
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, n)| n.as_deref() == Some(name.as_str()))
-                    .map(|(i, _)| i as u32 + 1)
-                    .collect();
+                let groups: Vec<u32> =
+                    self.group_names.iter().enumerate().filter(|(_, n)| n.as_deref() == Some(name.as_str())).map(|(i, _)| i as u32 + 1).collect();
                 if groups.is_empty() {
                     return Err(format!("unknown group name {name}"));
                 }
@@ -470,8 +457,8 @@ impl Parser<'_> {
                 if let Some(set) = self.try_class_escape()? {
                     return Ok(Node::Set(set));
                 }
-                let c = self.parse_character_escape(false)?;
-                Ok(Node::Set(self.literal_set(c)))
+                let character = self.parse_character_escape(false)?;
+                Ok(Node::Set(self.literal_set(character)))
             }
         }
     }
@@ -544,9 +531,9 @@ impl Parser<'_> {
 
     /// A CharacterEscape after `\` (and, inside classes, `\b` and `\-`).
     fn parse_character_escape(&mut self, in_class: bool) -> Result<u32, String> {
-        let c = self.peek().ok_or("trailing backslash")?;
+        let character = self.peek().ok_or("trailing backslash")?;
         self.pos += 1;
-        Ok(match c {
+        Ok(match character {
             'f' => 0x0C,
             'n' => 0x0A,
             'r' => 0x0D,
@@ -562,27 +549,20 @@ impl Parser<'_> {
                 letter as u32 % 32
             }
             '0' if !self.peek().is_some_and(|d| d.is_ascii_digit()) => 0,
-            'x' => {
-                
-                self.parse_hex_digits(2).ok_or("bad \\x escape")?
-            }
+            'x' => self.parse_hex_digits(2).ok_or("bad \\x escape")?,
             'u' => self.parse_unicode_escape()?,
-            '^' | '$' | '\\' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '/' => c as u32,
-            '-' if in_class => c as u32,
-            '&' | '!' | '#' | '%' | ',' | ':' | ';' | '<' | '=' | '>' | '@' | '`' | '~'
-                if in_class && self.unicode_sets =>
-            {
-                c as u32
-            }
-            _ => return Err(format!("invalid escape \\{c}")),
+            '^' | '$' | '\\' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '/' => character as u32,
+            '-' if in_class => character as u32,
+            '&' | '!' | '#' | '%' | ',' | ':' | ';' | '<' | '=' | '>' | '@' | '`' | '~' if in_class && self.unicode_sets => character as u32,
+            _ => return Err(format!("invalid escape \\{character}")),
         })
     }
 
     fn parse_hex_digits(&mut self, count: usize) -> Option<u32> {
         let mut value = 0u32;
         for i in 0..count {
-            let d = self.peek_at(i)?.to_digit(16)?;
-            value = value * 16 + d;
+            let digit = self.peek_at(i)?.to_digit(16)?;
+            value = value * 16 + digit;
         }
         self.pos += count;
         Some(value)
@@ -627,17 +607,19 @@ impl Parser<'_> {
                 break;
             }
             let start = self.parse_class_atom_u()?;
-            if self.peek() == Some('-') && self.peek_at(1).is_some_and(|c| c != ']')
-                && let ClassAtom::Char(lo) = start {
-                    self.pos += 1;
-                    match self.parse_class_atom_u()? {
-                        ClassAtom::Char(hi) if hi >= lo => {
-                            set.add_range(lo, hi);
-                            continue;
-                        }
-                        _ => return Err("bad class range".into()),
+            if self.peek() == Some('-')
+                && self.peek_at(1).is_some_and(|c| c != ']')
+                && let ClassAtom::Char(lo) = start
+            {
+                self.pos += 1;
+                match self.parse_class_atom_u()? {
+                    ClassAtom::Char(hi) if hi >= lo => {
+                        set.add_range(lo, hi);
+                        continue;
                     }
+                    _ => return Err("bad class range".into()),
                 }
+            }
             match start {
                 ClassAtom::Char(c) => set.add(c),
                 ClassAtom::Set(s) => set.union(&s),
@@ -650,10 +632,10 @@ impl Parser<'_> {
     }
 
     fn parse_class_atom_u(&mut self) -> Result<ClassAtom, String> {
-        let c = self.peek().unwrap();
+        let character = self.peek().expect("checked not at the end");
         self.pos += 1;
-        if c != '\\' {
-            return Ok(ClassAtom::Char(c as u32));
+        if character != '\\' {
+            return Ok(ClassAtom::Char(character as u32));
         }
         // Class escapes keep their own folding; fold_set of a union is the same.
         let saved_case = self.modes.ignore_case;
@@ -714,12 +696,12 @@ impl Parser<'_> {
     /// One union item (a range when `allow_range`), a nested class or a class escape;
     /// the result is already case-folded when `i` applies.
     fn parse_class_operand_v(&mut self, allow_range: bool) -> Result<CharSet, String> {
-        let c = self.peek().ok_or("unterminated class")?;
-        if c == '[' {
+        let character = self.peek().ok_or("unterminated class")?;
+        if character == '[' {
             self.pos += 1;
             return self.parse_class_v();
         }
-        let lo = if c == '\\' {
+        let lo = if character == '\\' {
             self.pos += 1;
             if self.peek() == Some('q') {
                 return Err("\\q{...} is not supported".into());
@@ -730,7 +712,7 @@ impl Parser<'_> {
             self.parse_character_escape(true)?
         } else {
             self.pos += 1;
-            c as u32
+            character as u32
         };
         if allow_range && self.peek() == Some('-') && self.peek_at(1) != Some('-') {
             self.pos += 1;
@@ -739,9 +721,9 @@ impl Parser<'_> {
                     self.pos += 1;
                     self.parse_character_escape(true)?
                 }
-                Some(c) => {
+                Some(character) => {
                     self.pos += 1;
-                    c as u32
+                    character as u32
                 }
                 None => return Err("unterminated range".into()),
             };

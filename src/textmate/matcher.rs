@@ -51,8 +51,7 @@ pub fn scopes_are_matching(this_scope: &str, scope: &str) -> bool {
     if this_scope.is_empty() {
         return false;
     }
-    this_scope == scope
-        || (this_scope.len() > scope.len() && this_scope.starts_with(scope) && this_scope.as_bytes()[scope.len()] == b'.')
+    this_scope == scope || (this_scope.len() > scope.len() && this_scope.starts_with(scope) && this_scope.as_bytes()[scope.len()] == b'.')
 }
 
 /// Tokens of /([LR]:|[\w\.:][\w\.:\-]*|[\,\|\-\(\)])/g.
@@ -60,24 +59,24 @@ fn tokenize(input: &str) -> Vec<&str> {
     let bytes = input.as_bytes();
     let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b':';
     let mut tokens = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if (b == b'L' || b == b'R') && bytes.get(i + 1) == Some(&b':') {
-            tokens.push(&input[i..i + 2]);
-            i += 2;
-        } else if is_word(b) {
-            let start = i;
-            i += 1;
-            while i < bytes.len() && (is_word(bytes[i]) || bytes[i] == b'-') {
-                i += 1;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if (byte == b'L' || byte == b'R') && bytes.get(index + 1) == Some(&b':') {
+            tokens.push(&input[index..index + 2]);
+            index += 2;
+        } else if is_word(byte) {
+            let start = index;
+            index += 1;
+            while index < bytes.len() && (is_word(bytes[index]) || bytes[index] == b'-') {
+                index += 1;
             }
-            tokens.push(&input[start..i]);
-        } else if matches!(b, b',' | b'|' | b'-' | b'(' | b')') {
-            tokens.push(&input[i..i + 1]);
-            i += 1;
+            tokens.push(&input[start..index]);
+        } else if matches!(byte, b',' | b'|' | b'-' | b'(' | b')') {
+            tokens.push(&input[index..index + 1]);
+            index += 1;
         } else {
-            i += 1;
+            index += 1;
         }
     }
     tokens
@@ -119,7 +118,7 @@ impl<'a> Parser<'a> {
             token if is_identifier(token) => {
                 let mut identifiers = Vec::new();
                 while is_identifier(self.token()) {
-                    identifiers.push(Rc::from(self.token().unwrap()));
+                    identifiers.push(Rc::from(self.token().expect("peeked an identifier")));
                     self.next();
                 }
                 Some(Matcher::Names(identifiers))
@@ -158,14 +157,16 @@ pub fn create_matchers(selector: &str) -> Vec<PrioritizedMatcher> {
     while parser.token().is_some() {
         let mut priority = 0;
         if let Some(token) = parser.token()
-            && token.len() == 2 && token.as_bytes()[1] == b':' {
-                priority = match token.as_bytes()[0] {
-                    b'R' => 1,
-                    b'L' => -1,
-                    _ => 0,
-                };
-                parser.next();
-            }
+            && token.len() == 2
+            && token.as_bytes()[1] == b':'
+        {
+            priority = match token.as_bytes()[0] {
+                b'R' => 1,
+                b'L' => -1,
+                _ => 0,
+            };
+            parser.next();
+        }
         let matcher = parser.parse_conjunction();
         results.push(PrioritizedMatcher { matcher, priority });
         if parser.token() != Some(",") {

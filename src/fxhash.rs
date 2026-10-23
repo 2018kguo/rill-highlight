@@ -22,7 +22,7 @@ impl Hasher for FxHasher {
     fn write(&mut self, bytes: &[u8]) {
         let mut chunks = bytes.chunks_exact(8);
         for chunk in &mut chunks {
-            self.add(u64::from_le_bytes(chunk.try_into().unwrap()));
+            self.add(u64::from_le_bytes(chunk.try_into().expect("8-byte chunk")));
         }
         for &byte in chunks.remainder() {
             self.add(u64::from(byte));

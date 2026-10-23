@@ -44,10 +44,11 @@ fn next_char(input: &[u16], pos: usize) -> Option<(u32, usize)> {
     let unit = *input.get(pos)?;
     if is_lead(unit)
         && let Some(&low) = input.get(pos + 1)
-            && is_trail(low) {
-                let c = 0x10000 + ((u32::from(unit) - 0xD800) << 10) + (u32::from(low) - 0xDC00);
-                return Some((c, pos + 2));
-            }
+        && is_trail(low)
+    {
+        let code_point = 0x10000 + ((u32::from(unit) - 0xD800) << 10) + (u32::from(low) - 0xDC00);
+        return Some((code_point, pos + 2));
+    }
     Some((u32::from(unit), pos + 1))
 }
 
@@ -59,8 +60,8 @@ fn prev_char(input: &[u16], pos: usize) -> Option<(u32, usize)> {
     }
     let unit = input[pos - 1];
     if is_trail(unit) && pos >= 2 && is_lead(input[pos - 2]) {
-        let c = 0x10000 + ((u32::from(input[pos - 2]) - 0xD800) << 10) + (u32::from(unit) - 0xDC00);
-        return Some((c, pos - 2));
+        let code_point = 0x10000 + ((u32::from(input[pos - 2]) - 0xD800) << 10) + (u32::from(unit) - 0xDC00);
+        return Some((code_point, pos - 2));
     }
     Some((u32::from(unit), pos - 1))
 }
@@ -70,21 +71,18 @@ fn step(input: &[u16], pos: usize, back: bool) -> Option<(u32, usize)> {
     if back { prev_char(input, pos) } else { next_char(input, pos) }
 }
 
-fn contains_literal(haystack: &[u16], literal: &[(u16, u16)]) -> bool {
-    let Some(&(a, b)) = literal.first() else { return true };
+/// The first index where `literal` (code units, each with its case variant)
+/// occurs in `haystack`.
+fn find_literal(haystack: &[u16], literal: &[(u16, u16)]) -> Option<usize> {
+    let Some(&(first, first_variant)) = literal.first() else { return Some(0) };
     if haystack.len() < literal.len() {
-        return false;
+        return None;
     }
-    let last_start = haystack.len() - literal.len();
-    let mut i = 0;
-    while i <= last_start {
-        let unit = haystack[i];
-        if (unit == a || unit == b) && literal[1..].iter().zip(&haystack[i + 1..]).all(|(&(x, y), &u)| u == x || u == y) {
-            return true;
-        }
-        i += 1;
-    }
-    false
+    (0..=haystack.len() - literal.len()).find(|&index| {
+        let unit = haystack[index];
+        (unit == first || unit == first_variant)
+            && literal[1..].iter().zip(&haystack[index + 1..]).all(|(&(unit, variant), &actual)| actual == unit || actual == variant)
+    })
 }
 
 /// Whether the code unit at `pos` can start what follows a repeat.
@@ -123,9 +121,10 @@ impl Matcher {
             pos -= 1;
         }
         if let Some(literal) = &program.required_literal
-            && !contains_literal(&input[pos..], literal) {
-                return false;
-            }
+            && find_literal(&input[pos..], literal).is_none()
+        {
+            return false;
+        }
         if sticky {
             return self.attempt(program, input, pos, captures);
         }
@@ -137,10 +136,9 @@ impl Matcher {
                 let end = len.min(limit.saturating_add(1));
                 while pos < end {
                     let unit = input[pos];
-                    if first.may_start(unit) && !(is_trail(unit) && pos > start && is_lead(input[pos - 1]))
-                        && self.attempt(program, input, pos, captures) {
-                            return true;
-                        }
+                    if first.may_start(unit) && !(is_trail(unit) && pos > start && is_lead(input[pos - 1])) && self.attempt(program, input, pos, captures) {
+                        return true;
+                    }
                     pos += 1;
                 }
                 false
@@ -224,11 +222,11 @@ impl Matcher {
                     let set = &program.sets[*set as usize];
                     let follow = program.follows.get(*follow as usize);
                     let mut count = 0u32;
-                    let mut p = pos;
+                    let mut position = pos;
                     while count < *min {
-                        match step(input, p, *back) {
+                        match step(input, position, *back) {
                             Some((c, next)) if set.contains(c) => {
-                                p = next;
+                                position = next;
                                 count += 1;
                             }
                             _ => break,
@@ -237,28 +235,28 @@ impl Matcher {
                     if count < *min {
                         false
                     } else if *greedy {
-                        let min_pos = p;
+                        let min_pos = position;
                         while count < *max {
-                            match step(input, p, *back) {
+                            match step(input, position, *back) {
                                 Some((c, next)) if set.contains(c) => {
-                                    p = next;
+                                    position = next;
                                     count += 1;
                                 }
                                 _ => break,
                             }
                         }
                         if let Some(follow) = follow {
-                            while p != min_pos && !may_follow(follow, input, p) {
-                                p = prev_char(input, p).unwrap().1;
+                            while position != min_pos && !may_follow(follow, input, position) {
+                                position = prev_char(input, position).expect("not at the start").1;
                             }
                         }
-                        if p == min_pos && follow.is_some_and(|follow| !may_follow(follow, input, p)) {
+                        if position == min_pos && follow.is_some_and(|follow| !may_follow(follow, input, position)) {
                             false
                         } else {
-                            if p != min_pos && !*possessive {
-                                self.stack.push(Frame::Star { pc: pc as u32 + 1, min_pos: min_pos as u32, pos: p as u32 });
+                            if position != min_pos && !*possessive {
+                                self.stack.push(Frame::Star { pc: pc as u32 + 1, min_pos: min_pos as u32, pos: position as u32 });
                             }
-                            pos = p;
+                            pos = position;
                             pc += 1;
                             true
                         }
@@ -266,10 +264,10 @@ impl Matcher {
                         let mut remaining = if *max == u32::MAX { u32::MAX } else { max - min };
                         let mut ok = true;
                         if let Some(follow) = follow {
-                            while !may_follow(follow, input, p) {
-                                match step(input, p, *back) {
+                            while !may_follow(follow, input, position) {
+                                match step(input, position, *back) {
                                     Some((c, next)) if remaining > 0 && set.contains(c) => {
-                                        p = next;
+                                        position = next;
                                         if remaining != u32::MAX {
                                             remaining -= 1;
                                         }
@@ -283,9 +281,9 @@ impl Matcher {
                         }
                         if ok {
                             if remaining > 0 {
-                                self.stack.push(Frame::LazyStar { pc: pc as u32 + 1, pos: p as u32, remaining });
+                                self.stack.push(Frame::LazyStar { pc: pc as u32 + 1, pos: position as u32, remaining });
                             }
-                            pos = p;
+                            pos = position;
                             pc += 1;
                         }
                         ok
@@ -407,16 +405,14 @@ impl Matcher {
                     }
                 }
                 Inst::LookEnd | Inst::Match => return Some(pos),
-                Inst::Backref { groups, ignore_case, back } => {
-                    match self.match_backref(program, input, *groups, *ignore_case, *back, pos, captures) {
-                        Some(next) => {
-                            pos = next;
-                            pc += 1;
-                            true
-                        }
-                        None => false,
+                Inst::Backref { groups, ignore_case, back } => match self.match_backref(program, input, *groups, *ignore_case, *back, pos, captures) {
+                    Some(next) => {
+                        pos = next;
+                        pc += 1;
+                        true
                     }
-                }
+                    None => false,
+                },
             };
             if ok {
                 continue;
@@ -426,7 +422,7 @@ impl Matcher {
                 if self.stack.len() == base {
                     return None;
                 }
-                match self.stack.pop().unwrap() {
+                match self.stack.pop().expect("a frame above the base") {
                     Frame::Alt { pc: alt_pc, pos: alt_pos } => {
                         pc = alt_pc as usize;
                         pos = alt_pos as usize;
@@ -445,10 +441,10 @@ impl Matcher {
                         let Inst::SetRepeat { back, follow, .. } = insts[resume as usize - 1] else { unreachable!() };
                         let follow = program.follows.get(follow as usize);
                         // Give back one character, then more while the rest cannot match.
-                        let mut previous = step(input, at as usize, !back).unwrap().1;
+                        let mut previous = step(input, at as usize, !back).expect("inside the input").1;
                         if let Some(follow) = follow {
                             while previous as u32 != min_pos && !may_follow(follow, input, previous) {
-                                previous = prev_char(input, previous).unwrap().1;
+                                previous = prev_char(input, previous).expect("not at the start").1;
                             }
                             if previous as u32 == min_pos && !may_follow(follow, input, previous) {
                                 continue;
@@ -466,30 +462,30 @@ impl Matcher {
                         let set = &program.sets[set as usize];
                         let follow = program.follows.get(follow as usize);
                         // Take one more character, then more until the rest may match.
-                        let mut p = at as usize;
+                        let mut position = at as usize;
                         let mut remaining = remaining;
                         let mut ok = false;
                         loop {
-                            match step(input, p, back) {
+                            match step(input, position, back) {
                                 Some((c, next)) if remaining > 0 && set.contains(c) => {
-                                    p = next;
+                                    position = next;
                                     if remaining != u32::MAX {
                                         remaining -= 1;
                                     }
                                 }
                                 _ => break,
                             }
-                            if follow.is_none_or(|follow| may_follow(follow, input, p)) {
+                            if follow.is_none_or(|follow| may_follow(follow, input, position)) {
                                 ok = true;
                                 break;
                             }
                         }
                         if ok {
                             if remaining > 0 {
-                                self.stack.push(Frame::LazyStar { pc: resume, pos: p as u32, remaining });
+                                self.stack.push(Frame::LazyStar { pc: resume, pos: position as u32, remaining });
                             }
                             pc = resume as usize;
-                            pos = p;
+                            pos = position;
                             break;
                         }
                     }
@@ -522,10 +518,11 @@ impl Matcher {
     }
 
     fn clear_captures(&mut self, from: u32, to: u32, captures: &mut [i32]) {
-        for slot in (from * 2) as usize..(to * 2) as usize {
-            if captures[slot] != -1 {
-                self.stack.push(Frame::Capture { slot: slot as u32, old: captures[slot] });
-                captures[slot] = -1;
+        let first = from * 2;
+        for (slot, value) in (first..).zip(&mut captures[first as usize..(to * 2) as usize]) {
+            if *value != -1 {
+                self.stack.push(Frame::Capture { slot, old: *value });
+                *value = -1;
             }
         }
     }
@@ -533,7 +530,7 @@ impl Matcher {
     /// Pops every frame above `base`, applying the undo records.
     fn unwind(&mut self, base: usize, captures: &mut [i32]) {
         while self.stack.len() > base {
-            match self.stack.pop().unwrap() {
+            match self.stack.pop().expect("a frame above the base") {
                 Frame::Capture { slot, old } => captures[slot as usize] = old,
                 Frame::Loop { reg, count, start } => self.loops[reg as usize] = (count, start),
                 _ => {}
@@ -543,9 +540,7 @@ impl Matcher {
 
     #[allow(clippy::too_many_arguments)]
     fn match_backref(&self, program: &Program, input: &[u16], groups: u32, ignore_case: bool, back: bool, pos: usize, captures: &[i32]) -> Option<usize> {
-        let group = program.backref_groups[groups as usize]
-            .iter()
-            .find(|&&g| captures[g as usize * 2] >= 0 && captures[g as usize * 2 + 1] >= 0);
+        let group = program.backref_groups[groups as usize].iter().find(|&&g| captures[g as usize * 2] >= 0 && captures[g as usize * 2 + 1] >= 0);
         let Some(&group) = group else { return Some(pos) };
         let start = captures[group as usize * 2] as usize;
         let end = captures[group as usize * 2 + 1] as usize;
@@ -564,31 +559,31 @@ impl Matcher {
         }
         // Compare code point by code point after case folding.
         if back {
-            let mut a = end;
-            let mut b = pos;
-            while a > start {
-                let (x, next_a) = prev_char(input, a)?;
-                let (y, next_b) = prev_char(input, b)?;
+            let mut left = end;
+            let mut right = pos;
+            while left > start {
+                let (x, next_a) = prev_char(input, left)?;
+                let (y, next_b) = prev_char(input, right)?;
                 if super::charset::fold(x) != super::charset::fold(y) {
                     return None;
                 }
-                a = next_a;
-                b = next_b;
+                left = next_a;
+                right = next_b;
             }
-            Some(b)
+            Some(right)
         } else {
-            let mut a = start;
-            let mut b = pos;
-            while a < end {
-                let (x, next_a) = next_char(input, a)?;
-                let (y, next_b) = next_char(input, b)?;
+            let mut left = start;
+            let mut right = pos;
+            while left < end {
+                let (x, next_a) = next_char(input, left)?;
+                let (y, next_b) = next_char(input, right)?;
                 if super::charset::fold(x) != super::charset::fold(y) {
                     return None;
                 }
-                a = next_a;
-                b = next_b;
+                left = next_a;
+                right = next_b;
             }
-            Some(b)
+            Some(right)
         }
     }
 }

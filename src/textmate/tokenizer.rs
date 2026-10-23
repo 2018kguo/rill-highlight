@@ -3,25 +3,27 @@
 //! matched do not depend on the theme, so one pass computes every theme's token
 //! metadata.
 
-use super::grammar::{EndRule, Grammar, OnigString, RuleId, RuleKind, ScanMatch, END_RULE_ID, UNMATCHED, WHILE_RULE_ID};
+use super::grammar::{END_RULE_ID, EndRule, Grammar, OnigString, RuleId, RuleKind, ScanMatch, UNMATCHED, WHILE_RULE_ID};
 use super::theme::{FONT_STYLE_NOT_SET, ScopeStack, StyleAttributes, Theme};
 use std::cell::Cell;
 use std::rc::Rc;
 
-/// Themes tokenized together (Streamdown's light and dark).
-pub const THEMES: usize = 2;
+/// The most themes tokenized together (Shiki's `themes` option, e.g. light, dark
+/// and dim). Unused slots hold 0.
+pub const MAX_THEMES: usize = 4;
 
-pub type Metadata = [u32; THEMES];
+/// Encoded token metadata per theme.
+pub type Metadata = [u32; MAX_THEMES];
 
 /// `AttributedScopeStack`.
 #[derive(Debug)]
 pub struct AttrScope {
-    pub parent: Option<Rc<AttrScope>>,
     pub path: Rc<ScopeStack>,
     pub attrs: Metadata,
 }
 
 impl AttrScope {
+    #[must_use]
     pub fn scope_names(&self) -> Vec<Rc<str>> {
         let mut names = Vec::new();
         let mut node = Some(&self.path);
@@ -162,13 +164,14 @@ fn merge_attributes(existing: u32, token_type: u32, style: Option<StyleAttribute
 
 /// Binary tokens per theme for one line (`LineTokens` with `emitBinaryTokens`).
 pub struct LineTokens {
-    pub tokens: [Vec<(u32, u32)>; THEMES],
+    pub tokens: [Vec<(u32, u32)>; MAX_THEMES],
+    theme_count: usize,
     last_end: i64,
 }
 
 impl LineTokens {
-    fn new() -> Self {
-        Self { tokens: Default::default(), last_end: 0 }
+    fn new(theme_count: usize) -> Self {
+        Self { tokens: Default::default(), theme_count, last_end: 0 }
     }
 
     fn produce(&mut self, state: &State, end: usize) {
@@ -179,7 +182,7 @@ impl LineTokens {
         if self.last_end >= end as i64 {
             return;
         }
-        for (theme, tokens) in self.tokens.iter_mut().enumerate() {
+        for (theme, tokens) in self.tokens.iter_mut().take(self.theme_count).enumerate() {
             let metadata = scopes.attrs[theme];
             if tokens.last().is_none_or(|&(_, last)| last != metadata) {
                 tokens.push((self.last_end as u32, metadata));
@@ -189,6 +192,7 @@ impl LineTokens {
     }
 
     /// `getBinaryResult` for one theme.
+    #[must_use]
     pub fn binary_result(&self, theme: usize, state: &State, line_length: usize) -> Vec<(u32, u32)> {
         let mut tokens = self.tokens[theme].clone();
         if tokens.last().is_some_and(|&(start, _)| start as usize == line_length - 1) {
@@ -203,7 +207,8 @@ impl LineTokens {
 
 pub struct Tokenizer<'a> {
     pub grammar: &'a mut Grammar,
-    pub themes: [&'a Theme; THEMES],
+    /// One to `MAX_THEMES` themes.
+    pub themes: &'a [&'a Theme],
 }
 
 type Result<T> = std::result::Result<T, String>;
@@ -225,17 +230,17 @@ impl Tokenizer<'_> {
         let name: Rc<str> = Rc::from(scope_name);
         let token_type = self.grammar.token_type(&name);
         let path = Rc::new(ScopeStack { parent: Some(target.path.clone()), name });
-        let mut attrs = [0; THEMES];
-        for (theme, attr) in attrs.iter_mut().enumerate() {
-            *attr = merge_attributes(target.attrs[theme], token_type, self.themes[theme].match_path(&path));
+        let mut attrs = [0; MAX_THEMES];
+        for (index, (theme, attr)) in self.themes.iter().zip(attrs.iter_mut()).enumerate() {
+            *attr = merge_attributes(target.attrs[index], token_type, theme.match_path(&path));
         }
-        Rc::new(AttrScope { parent: Some(target.clone()), path, attrs })
+        Rc::new(AttrScope { path, attrs })
     }
 
     fn initial_state(&mut self) -> State {
-        let mut defaults = [0; THEMES];
-        for (theme, default) in defaults.iter_mut().enumerate() {
-            let style = self.themes[theme].defaults;
+        let mut defaults = [0; MAX_THEMES];
+        for (theme, default) in self.themes.iter().zip(defaults.iter_mut()) {
+            let style = theme.defaults;
             *default = set_metadata(0, 1, 8, style.font_style, style.foreground, style.background);
         }
         let root_name = self.grammar.rule(self.grammar.root_id).name(None, None);
@@ -243,13 +248,13 @@ impl Tokenizer<'_> {
             Some(name) => {
                 let token_type = self.grammar.token_type(&name);
                 let path = Rc::new(ScopeStack { parent: None, name });
-                let mut attrs = [0; THEMES];
-                for (theme, attr) in attrs.iter_mut().enumerate() {
-                    *attr = merge_attributes(defaults[theme], token_type, self.themes[theme].match_path(&path));
+                let mut attrs = [0; MAX_THEMES];
+                for (index, (theme, attr)) in self.themes.iter().zip(attrs.iter_mut()).enumerate() {
+                    *attr = merge_attributes(defaults[index], token_type, theme.match_path(&path));
                 }
-                Rc::new(AttrScope { parent: None, path, attrs })
+                Rc::new(AttrScope { path, attrs })
             }
-            None => Rc::new(AttrScope { parent: None, path: Rc::new(ScopeStack { parent: None, name: Rc::from("unknown") }), attrs: defaults }),
+            None => Rc::new(AttrScope { path: Rc::new(ScopeStack { parent: None, name: Rc::from("unknown") }), attrs: defaults }),
         };
         push_state(None, self.grammar.root_id, -1, -1, false, None, scopes.clone(), scopes)
     }
@@ -274,12 +279,20 @@ impl Tokenizer<'_> {
         content.push(0x0A);
         let string = self.grammar.new_string(content);
         let line_length = string.content.len();
-        let mut tokens = LineTokens::new();
+        let mut tokens = LineTokens::new(self.themes.len());
         let state = self.tokenize_string(&string, is_first_line, 0, state, &mut tokens, true)?;
         Ok((tokens, state, line_length))
     }
 
-    fn tokenize_string(&mut self, line: &OnigString, mut is_first_line: bool, mut line_pos: usize, mut stack: State, tokens: &mut LineTokens, check_while: bool) -> Result<State> {
+    fn tokenize_string(
+        &mut self,
+        line: &OnigString,
+        mut is_first_line: bool,
+        mut line_pos: usize,
+        mut stack: State,
+        tokens: &mut LineTokens,
+        check_while: bool,
+    ) -> Result<State> {
         let line_length = line.content.len();
         let mut anchor_position: i64 = -1;
         if check_while {
@@ -320,15 +333,28 @@ impl Tokenizer<'_> {
                 let before_push = stack.clone();
                 let scope_name = self.grammar.rule(rule_id).name(Some(&line.content), Some(captures));
                 let name_scopes = self.push_attributed(&stack.content_name_scopes, scope_name.as_deref());
-                stack = push_state(Some(&stack), rule_id, line_pos as i64, anchor_position, match_end == line_length, None, name_scopes.clone(), name_scopes.clone());
+                stack = push_state(
+                    Some(&stack),
+                    rule_id,
+                    line_pos as i64,
+                    anchor_position,
+                    match_end == line_length,
+                    None,
+                    name_scopes.clone(),
+                    name_scopes.clone(),
+                );
                 enum Kind {
                     BeginEnd { captures: Vec<Option<RuleId>>, back_references: bool },
                     BeginWhile { captures: Vec<Option<RuleId>>, back_references: bool },
                     Match { captures: Vec<Option<RuleId>> },
                 }
                 let kind = match &self.grammar.rule(rule_id).kind {
-                    RuleKind::BeginEnd { begin_captures, end, .. } => Kind::BeginEnd { captures: begin_captures.clone(), back_references: end.has_back_references },
-                    RuleKind::BeginWhile { begin_captures, while_source, .. } => Kind::BeginWhile { captures: begin_captures.clone(), back_references: while_source.has_back_references },
+                    RuleKind::BeginEnd { begin_captures, end, .. } => {
+                        Kind::BeginEnd { captures: begin_captures.clone(), back_references: end.has_back_references }
+                    }
+                    RuleKind::BeginWhile { begin_captures, while_source, .. } => {
+                        Kind::BeginWhile { captures: begin_captures.clone(), back_references: while_source.has_back_references }
+                    }
                     RuleKind::Match { captures, .. } => Kind::Match { captures: captures.clone() },
                     _ => Kind::Match { captures: Vec::new() },
                 };
@@ -355,7 +381,7 @@ impl Tokenizer<'_> {
                             stack = with_end_rule(&stack, Rc::new(EndRule { values: Rc::from(values) }));
                         }
                         if !has_advanced && has_same_rule_as(&before_push, &stack) {
-                            let parent = stack.parent.clone().unwrap();
+                            let parent = stack.parent.clone().expect("an end rule has a parent state");
                             tokens.produce(&parent, line_length);
                             return Ok(parent);
                         }
@@ -363,7 +389,7 @@ impl Tokenizer<'_> {
                     Kind::Match { captures: match_captures } => {
                         self.handle_captures(line, is_first_line, &stack, tokens, &match_captures, captures)?;
                         tokens.produce(&stack, match_end);
-                        stack = stack.parent.clone().unwrap();
+                        stack = stack.parent.clone().expect("a pushed rule has a parent state");
                         if !has_advanced {
                             if let Some(parent) = stack.parent.clone() {
                                 stack = parent;
@@ -381,7 +407,14 @@ impl Tokenizer<'_> {
         }
     }
 
-    fn check_while_conditions(&mut self, line: &OnigString, mut is_first_line: bool, mut line_pos: usize, mut stack: State, tokens: &mut LineTokens) -> Result<(State, usize, bool, i64)> {
+    fn check_while_conditions(
+        &mut self,
+        line: &OnigString,
+        mut is_first_line: bool,
+        mut line_pos: usize,
+        mut stack: State,
+        tokens: &mut LineTokens,
+    ) -> Result<(State, usize, bool, i64)> {
         let mut anchor_position: i64 = if stack.begin_rule_captured_eol { 0 } else { -1 };
         let mut while_rules = Vec::new();
         let mut node = Some(stack.clone());
@@ -392,11 +425,12 @@ impl Tokenizer<'_> {
             node = el.parent.clone();
         }
         while let Some(while_state) = while_rules.pop() {
-            let compiled = self.grammar.compile_ag(while_state.rule_id, while_state.end_rule.as_deref(), is_first_line, line_pos as i64 == anchor_position, true)?;
+            let compiled =
+                self.grammar.compile_ag(while_state.rule_id, while_state.end_rule.as_deref(), is_first_line, line_pos as i64 == anchor_position, true)?;
             match self.grammar.find_next_match(&compiled, line, line_pos)? {
                 Some(found) => {
                     if found.rule_id != WHILE_RULE_ID {
-                        stack = while_state.parent.clone().unwrap();
+                        stack = while_state.parent.clone().expect("a while rule has a parent state");
                         break;
                     }
                     if !found.captures.is_empty() {
@@ -416,7 +450,7 @@ impl Tokenizer<'_> {
                     }
                 }
                 None => {
-                    stack = while_state.parent.clone().unwrap();
+                    stack = while_state.parent.clone().expect("a while rule has a parent state");
                     break;
                 }
             }
@@ -424,7 +458,14 @@ impl Tokenizer<'_> {
         Ok((stack, line_pos, is_first_line, anchor_position))
     }
 
-    fn match_rule_or_injections(&mut self, line: &OnigString, is_first_line: bool, line_pos: usize, stack: &State, anchor_position: i64) -> Result<Option<ScanMatch>> {
+    fn match_rule_or_injections(
+        &mut self,
+        line: &OnigString,
+        is_first_line: bool,
+        line_pos: usize,
+        stack: &State,
+        anchor_position: i64,
+    ) -> Result<Option<ScanMatch>> {
         let compiled = self.grammar.compile_ag(stack.rule_id, stack.end_rule.as_deref(), is_first_line, line_pos as i64 == anchor_position, false)?;
         let match_result = self.grammar.find_next_match(&compiled, line, line_pos)?;
         if self.grammar.injections.is_empty() {
@@ -442,7 +483,14 @@ impl Tokenizer<'_> {
         Ok(Some(match_result))
     }
 
-    fn match_injections(&mut self, line: &OnigString, is_first_line: bool, line_pos: usize, stack: &State, anchor_position: i64) -> Result<Option<(ScanMatch, bool)>> {
+    fn match_injections(
+        &mut self,
+        line: &OnigString,
+        is_first_line: bool,
+        line_pos: usize,
+        stack: &State,
+        anchor_position: i64,
+    ) -> Result<Option<(ScanMatch, bool)>> {
         let mut best_rating = u32::MAX;
         let mut best: Option<ScanMatch> = None;
         let mut best_priority = 0;
@@ -470,7 +518,15 @@ impl Tokenizer<'_> {
         Ok(best.map(|found| (found, best_priority == -1)))
     }
 
-    fn handle_captures(&mut self, line: &OnigString, is_first_line: bool, stack: &State, tokens: &mut LineTokens, captures: &[Option<RuleId>], indices: &[(u32, u32)]) -> Result<()> {
+    fn handle_captures(
+        &mut self,
+        line: &OnigString,
+        is_first_line: bool,
+        stack: &State,
+        tokens: &mut LineTokens,
+        captures: &[Option<RuleId>],
+        indices: &[(u32, u32)],
+    ) -> Result<()> {
         if captures.is_empty() {
             return Ok(());
         }

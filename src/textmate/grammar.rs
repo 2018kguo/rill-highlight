@@ -2,9 +2,9 @@
 //! (Shiki's `JavaScriptScanner` with its search cache shared by all scanners).
 
 use super::matcher::{Matcher, create_matchers};
-use super::raw::{RawGrammar, ROOT_NODE, SELF_NODE};
-use crate::regex::{EmulationOptions, JsRegExp, Matcher as RegexMatcher};
+use super::raw::{ROOT_NODE, RawGrammar, SELF_NODE};
 use crate::fxhash::FxHashMap as HashMap;
+use crate::regex::{EmulationOptions, JsRegExp, Matcher as RegexMatcher};
 use std::rc::Rc;
 
 pub type RuleId = u32;
@@ -22,7 +22,7 @@ pub struct Translation {
 }
 
 /// The grammars available to a highlighter (Shiki's registry for one `langs` list).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Registry {
     grammars: HashMap<Rc<str>, Rc<RawGrammar>>,
     /// Oniguruma source -> translation (`None`: skipped by the forgiving engine).
@@ -42,8 +42,15 @@ impl Registry {
         self.grammars.insert(grammar.scope_name.clone(), Rc::new(grammar));
     }
 
+    #[must_use]
     pub fn grammar(&self, scope_name: &str) -> Option<&Rc<RawGrammar>> {
         self.grammars.get(scope_name)
+    }
+
+    /// The grammar with scope name or name `name`.
+    #[must_use]
+    pub fn find(&self, name: &str) -> Option<&Rc<RawGrammar>> {
+        self.grammars.get(name).or_else(|| self.grammars.values().find(|grammar| &*grammar.name == name))
     }
 
     /// Shiki `Resolver.getInjections`: grammars injected into `scope_name` or any of
@@ -118,7 +125,12 @@ impl RegexSource {
             }
             pos += raw[pos..].chars().next().map_or(1, char::len_utf8);
         }
-        let source: Rc<str> = if last == 0 { Rc::from(raw) } else { output.push_str(&raw[last..]); Rc::from(output) };
+        let source: Rc<str> = if last == 0 {
+            Rc::from(raw)
+        } else {
+            output.push_str(&raw[last..]);
+            Rc::from(output)
+        };
         let has_back_references = has_back_reference(&source);
         RegexSource { source: Some(source), has_anchor, has_back_references, rule_id }
     }
@@ -137,13 +149,14 @@ fn resolve_anchors(source: &str, allow_a: bool, allow_g: bool) -> String {
     while let Some(c) = chars.next() {
         out.push(c);
         if c == '\\'
-            && let Some(next) = chars.next() {
-                out.push(match next {
-                    'A' if !allow_a => '\u{FFFF}',
-                    'G' if !allow_g => '\u{FFFF}',
-                    other => other,
-                });
-            }
+            && let Some(next) = chars.next()
+        {
+            out.push(match next {
+                'A' if !allow_a => '\u{FFFF}',
+                'G' if !allow_g => '\u{FFFF}',
+                other => other,
+            });
+        }
     }
     out
 }
@@ -152,20 +165,20 @@ fn resolve_anchors(source: &str, allow_a: bool, allow_g: bool) -> String {
 fn back_reference_template(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     let bytes = source.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
-            let mut j = i + 1;
-            while j < bytes.len() && bytes[j].is_ascii_digit() {
-                j += 1;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' && index + 1 < bytes.len() && bytes[index + 1].is_ascii_digit() {
+            let mut end = index + 1;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
             }
-            let n: u64 = source[i + 1..j].parse().unwrap_or(u64::MAX);
-            out.push(char::from_u32(0xE000 + n.min(0x8FF) as u32).unwrap());
-            i = j;
+            let number: u64 = source[index + 1..end].parse().unwrap_or(u64::MAX);
+            out.push(char::from_u32(0xE000 + number.min(0x8FF) as u32).expect("a private-use code point"));
+            index = end;
         } else {
-            let c = source[i..].chars().next().unwrap();
-            out.push(c);
-            i += c.len_utf8();
+            let character = source[index..].chars().next().expect("not at the end");
+            out.push(character);
+            index += character.len_utf8();
         }
     }
     out
@@ -241,11 +254,11 @@ fn capture_reference_at(name: &str, i: usize) -> Option<(usize, CaseCommand, usi
         return None;
     }
     let digits = |from: usize| {
-        let mut j = from;
-        while j < bytes.len() && bytes[j].is_ascii_digit() {
-            j += 1;
+        let mut index = from;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
         }
-        j
+        index
     };
     let end = digits(i + 1);
     if end > i + 1 {
@@ -269,26 +282,27 @@ fn capture_reference_at(name: &str, i: usize) -> Option<(usize, CaseCommand, usi
 /// `RegexSource.replaceCaptures`.
 pub fn replace_captures(name: &str, line: &[u16], captures: &[(u32, u32)]) -> String {
     let mut out = String::with_capacity(name.len());
-    let mut i = 0;
+    let mut index = 0;
     let mut last = 0;
-    while i < name.len() {
-        if let Some((group, command, len)) = capture_reference_at(name, i)
-            && let Some(&(start, end)) = captures.get(group) {
-                out.push_str(&name[last..i]);
-                let start = (start as usize).min(line.len());
-                let end = (end as usize).min(line.len()).max(start);
-                let text = String::from_utf16_lossy(&line[start..end]);
-                let text = text.trim_start_matches('.');
-                match command {
-                    CaseCommand::None => out.push_str(text),
-                    CaseCommand::Downcase => out.push_str(&text.to_lowercase()),
-                    CaseCommand::Upcase => out.push_str(&text.to_uppercase()),
-                }
-                i += len;
-                last = i;
-                continue;
+    while index < name.len() {
+        if let Some((group, command, len)) = capture_reference_at(name, index)
+            && let Some(&(start, end)) = captures.get(group)
+        {
+            out.push_str(&name[last..index]);
+            let start = (start as usize).min(line.len());
+            let end = (end as usize).min(line.len()).max(start);
+            let text = String::from_utf16_lossy(&line[start..end]);
+            let text = text.trim_start_matches('.');
+            match command {
+                CaseCommand::None => out.push_str(text),
+                CaseCommand::Downcase => out.push_str(&text.to_lowercase()),
+                CaseCommand::Upcase => out.push_str(&text.to_uppercase()),
             }
-        i += name[i..].chars().next().map_or(1, char::len_utf8);
+            index += len;
+            last = index;
+            continue;
+        }
+        index += name[index..].chars().next().map_or(1, char::len_utf8);
     }
     out.push_str(&name[last..]);
     out
@@ -439,7 +453,6 @@ impl Grammar {
         self.included.insert(Rc::from(scope_name), index);
         Some(index)
     }
-
 
     fn register_rule(&mut self) -> RuleId {
         self.rules.push(Rule {
@@ -653,9 +666,9 @@ impl Grammar {
         if let Some(&t) = self.token_types.get(scope) {
             return t;
         }
-        let t = standard_token_type(scope);
-        self.token_types.insert(scope.clone(), t);
-        t
+        let token_type = standard_token_type(scope);
+        self.token_types.insert(scope.clone(), token_type);
+        token_type
     }
 
     /// `collectPatterns` of the rule's own pattern list (`while_list` for the while
@@ -719,7 +732,14 @@ impl Grammar {
 
     /// `compileAG` (or `compileWhileAG`): the scanner for `rule_id` with the end or
     /// while pattern resolved from `end_rule`.
-    pub fn compile_ag(&mut self, rule_id: RuleId, end_rule: Option<&EndRule>, allow_a: bool, allow_g: bool, while_list: bool) -> Result<Rc<CompiledRule>, String> {
+    pub fn compile_ag(
+        &mut self,
+        rule_id: RuleId,
+        end_rule: Option<&EndRule>,
+        allow_a: bool,
+        allow_g: bool,
+        while_list: bool,
+    ) -> Result<Rc<CompiledRule>, String> {
         let slot = usize::from(allow_a) * 4 + usize::from(allow_g) * 2 + usize::from(while_list);
         let index = rule_id as usize - 1;
         if let Some(Some(compiled)) = self.static_scanners.get(index).map(|s| &s[slot]) {
@@ -729,7 +749,14 @@ impl Grammar {
         Ok(compiled)
     }
 
-    fn compile_ag_uncached(&mut self, rule_id: RuleId, end_rule: Option<&EndRule>, allow_a: bool, allow_g: bool, while_list: bool) -> Result<Rc<CompiledRule>, String> {
+    fn compile_ag_uncached(
+        &mut self,
+        rule_id: RuleId,
+        end_rule: Option<&EndRule>,
+        allow_a: bool,
+        allow_g: bool,
+        while_list: bool,
+    ) -> Result<Rc<CompiledRule>, String> {
         let slot = usize::from(allow_a) * 4 + usize::from(allow_g) * 2 + usize::from(while_list);
         let sources = self.collected_sources(rule_id, while_list)?;
         let has_anchors = sources.iter().any(|s| s.has_anchor);
@@ -894,16 +921,13 @@ impl Grammar {
         // The winner's captures are still in its cache entry: every regex is executed
         // at most once per call, and only the winner can be the best.
         let Some((index, _)) = best else { return Ok(None) };
-        let regex_index = compiled.regexes[index].unwrap() as usize;
+        let regex_index = compiled.regexes[index].expect("the best match has a regex") as usize;
         Ok(Some(self.scan_match(compiled.rules[index], regex_index)))
     }
 
     fn scan_match(&self, rule_id: i32, regex_index: usize) -> ScanMatch {
         let raw = &self.search_cache[regex_index].captures;
-        let captures = raw
-            .chunks(2)
-            .map(|pair| if pair[0] < 0 { (UNMATCHED, UNMATCHED) } else { (pair[0] as u32, pair[1] as u32) })
-            .collect();
+        let captures = raw.chunks(2).map(|pair| if pair[0] < 0 { (UNMATCHED, UNMATCHED) } else { (pair[0] as u32, pair[1] as u32) }).collect();
         ScanMatch { rule_id, captures }
     }
 }

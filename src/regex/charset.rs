@@ -166,10 +166,11 @@ impl CharSet {
         let mut merged: Vec<(u32, u32)> = Vec::with_capacity(self.ranges.len());
         for &(lo, hi) in &self.ranges {
             if let Some(last) = merged.last_mut()
-                && lo <= last.1.saturating_add(1) {
-                    last.1 = last.1.max(hi);
-                    continue;
-                }
+                && lo <= last.1.saturating_add(1)
+            {
+                last.1 = last.1.max(hi);
+                continue;
+            }
             merged.push((lo, hi));
         }
         self.ranges = merged;
@@ -268,34 +269,102 @@ fn canonical_property_name(name: &str) -> Option<String> {
 
 fn general_category(value: &str) -> Option<&'static str> {
     const ALIASES: &[(&str, &str)] = &[
-        ("L", "L"), ("Letter", "L"), ("LC", "LC"), ("Cased_Letter", "LC"),
-        ("Lu", "Lu"), ("Uppercase_Letter", "Lu"), ("Ll", "Ll"), ("Lowercase_Letter", "Ll"),
-        ("Lt", "Lt"), ("Titlecase_Letter", "Lt"), ("Lm", "Lm"), ("Modifier_Letter", "Lm"),
-        ("Lo", "Lo"), ("Other_Letter", "Lo"), ("M", "M"), ("Mark", "M"), ("Combining_Mark", "M"),
-        ("Mn", "Mn"), ("Nonspacing_Mark", "Mn"), ("Mc", "Mc"), ("Spacing_Mark", "Mc"),
-        ("Me", "Me"), ("Enclosing_Mark", "Me"), ("N", "N"), ("Number", "N"),
-        ("Nd", "Nd"), ("Decimal_Number", "Nd"), ("digit", "Nd"), ("Nl", "Nl"), ("Letter_Number", "Nl"),
-        ("No", "No"), ("Other_Number", "No"), ("P", "P"), ("Punctuation", "P"), ("punct", "P"),
-        ("Pc", "Pc"), ("Connector_Punctuation", "Pc"), ("Pd", "Pd"), ("Dash_Punctuation", "Pd"),
-        ("Ps", "Ps"), ("Open_Punctuation", "Ps"), ("Pe", "Pe"), ("Close_Punctuation", "Pe"),
-        ("Pi", "Pi"), ("Initial_Punctuation", "Pi"), ("Pf", "Pf"), ("Final_Punctuation", "Pf"),
-        ("Po", "Po"), ("Other_Punctuation", "Po"), ("S", "S"), ("Symbol", "S"),
-        ("Sm", "Sm"), ("Math_Symbol", "Sm"), ("Sc", "Sc"), ("Currency_Symbol", "Sc"),
-        ("Sk", "Sk"), ("Modifier_Symbol", "Sk"), ("So", "So"), ("Other_Symbol", "So"),
-        ("Z", "Z"), ("Separator", "Z"), ("Zs", "Zs"), ("Space_Separator", "Zs"),
-        ("Zl", "Zl"), ("Line_Separator", "Zl"), ("Zp", "Zp"), ("Paragraph_Separator", "Zp"),
-        ("C", "C"), ("Other", "C"), ("Cc", "Cc"), ("Control", "Cc"), ("cntrl", "Cc"),
-        ("Cf", "Cf"), ("Format", "Cf"), ("Cs", "Cs"), ("Surrogate", "Cs"),
-        ("Co", "Co"), ("Private_Use", "Co"), ("Cn", "Cn"), ("Unassigned", "Cn"),
+        ("L", "L"),
+        ("Letter", "L"),
+        ("LC", "LC"),
+        ("Cased_Letter", "LC"),
+        ("Lu", "Lu"),
+        ("Uppercase_Letter", "Lu"),
+        ("Ll", "Ll"),
+        ("Lowercase_Letter", "Ll"),
+        ("Lt", "Lt"),
+        ("Titlecase_Letter", "Lt"),
+        ("Lm", "Lm"),
+        ("Modifier_Letter", "Lm"),
+        ("Lo", "Lo"),
+        ("Other_Letter", "Lo"),
+        ("M", "M"),
+        ("Mark", "M"),
+        ("Combining_Mark", "M"),
+        ("Mn", "Mn"),
+        ("Nonspacing_Mark", "Mn"),
+        ("Mc", "Mc"),
+        ("Spacing_Mark", "Mc"),
+        ("Me", "Me"),
+        ("Enclosing_Mark", "Me"),
+        ("N", "N"),
+        ("Number", "N"),
+        ("Nd", "Nd"),
+        ("Decimal_Number", "Nd"),
+        ("digit", "Nd"),
+        ("Nl", "Nl"),
+        ("Letter_Number", "Nl"),
+        ("No", "No"),
+        ("Other_Number", "No"),
+        ("P", "P"),
+        ("Punctuation", "P"),
+        ("punct", "P"),
+        ("Pc", "Pc"),
+        ("Connector_Punctuation", "Pc"),
+        ("Pd", "Pd"),
+        ("Dash_Punctuation", "Pd"),
+        ("Ps", "Ps"),
+        ("Open_Punctuation", "Ps"),
+        ("Pe", "Pe"),
+        ("Close_Punctuation", "Pe"),
+        ("Pi", "Pi"),
+        ("Initial_Punctuation", "Pi"),
+        ("Pf", "Pf"),
+        ("Final_Punctuation", "Pf"),
+        ("Po", "Po"),
+        ("Other_Punctuation", "Po"),
+        ("S", "S"),
+        ("Symbol", "S"),
+        ("Sm", "Sm"),
+        ("Math_Symbol", "Sm"),
+        ("Sc", "Sc"),
+        ("Currency_Symbol", "Sc"),
+        ("Sk", "Sk"),
+        ("Modifier_Symbol", "Sk"),
+        ("So", "So"),
+        ("Other_Symbol", "So"),
+        ("Z", "Z"),
+        ("Separator", "Z"),
+        ("Zs", "Zs"),
+        ("Space_Separator", "Zs"),
+        ("Zl", "Zl"),
+        ("Line_Separator", "Zl"),
+        ("Zp", "Zp"),
+        ("Paragraph_Separator", "Zp"),
+        ("C", "C"),
+        ("Other", "C"),
+        ("Cc", "Cc"),
+        ("Control", "Cc"),
+        ("cntrl", "Cc"),
+        ("Cf", "Cf"),
+        ("Format", "Cf"),
+        ("Cs", "Cs"),
+        ("Surrogate", "Cs"),
+        ("Co", "Co"),
+        ("Private_Use", "Co"),
+        ("Cn", "Cn"),
+        ("Unassigned", "Cn"),
     ];
     ALIASES.iter().find(|(alias, _)| *alias == value).map(|(_, canonical)| *canonical)
 }
 
 fn script(value: &str) -> Option<&'static str> {
     const ALIASES: &[(&str, &str)] = &[
-        ("Greek", "Greek"), ("Grek", "Greek"), ("Han", "Han"), ("Hani", "Han"),
-        ("Hangul", "Hangul"), ("Hang", "Hangul"), ("Katakana", "Katakana"), ("Kana", "Katakana"),
-        ("Hiragana", "Hiragana"), ("Hira", "Hiragana"),
+        ("Greek", "Greek"),
+        ("Grek", "Greek"),
+        ("Han", "Han"),
+        ("Hani", "Han"),
+        ("Hangul", "Hangul"),
+        ("Hang", "Hangul"),
+        ("Katakana", "Katakana"),
+        ("Kana", "Katakana"),
+        ("Hiragana", "Hiragana"),
+        ("Hira", "Hiragana"),
     ];
     ALIASES.iter().find(|(alias, _)| *alias == value).map(|(_, canonical)| *canonical)
 }

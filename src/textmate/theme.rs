@@ -1,8 +1,8 @@
 //! Themes: Shiki's `normalizeTheme` and vscode-textmate's theme trie.
 
+use crate::fxhash::FxHashMap as HashMap;
 use serde_json::{Map, Value, json};
 use std::cell::RefCell;
-use crate::fxhash::FxHashMap as HashMap;
 use std::rc::Rc;
 
 pub const FONT_STYLE_NOT_SET: i32 = -1;
@@ -11,11 +11,12 @@ pub const FONT_STYLE_NOT_SET: i32 = -1;
 #[derive(Debug, Clone)]
 pub struct NormalizedTheme {
     pub name: String,
+    pub theme_type: String,
     pub fg: String,
     pub bg: String,
     pub settings: Vec<Value>,
     /// Lower-case color -> replacement.
-    pub color_replacements: HashMap<String, String>,
+    pub color_replacements: std::collections::HashMap<String, String>,
 }
 
 fn non_empty(value: Option<&Value>) -> Option<String> {
@@ -29,7 +30,7 @@ fn non_empty(value: Option<&Value>) -> Option<String> {
 pub fn normalize_theme(raw: &Value) -> Result<NormalizedTheme, String> {
     let mut theme: Map<String, Value> = raw.as_object().ok_or("theme is not an object")?.clone();
     if theme.contains_key("tokenColors") && !truthy(theme.get("settings")) {
-        let token_colors = theme.remove("tokenColors").unwrap();
+        let token_colors = theme.remove("tokenColors").expect("checked tokenColors");
         theme.insert("settings".into(), token_colors);
     }
     let theme_type = non_empty(theme.get("type")).unwrap_or_else(|| "dark".into());
@@ -71,11 +72,9 @@ pub fn normalize_theme(raw: &Value) -> Result<NormalizedTheme, String> {
             bg = Some(if light { "#fffffe" } else { "#1e1e1e" }.into());
         }
     }
-    let fg = fg.unwrap();
-    let bg = bg.unwrap();
-    let first_is_global = settings
-        .first()
-        .is_some_and(|s| truthy(s.get("settings")) && !truthy(s.get("scope")));
+    let fg = fg.expect("a fallback foreground");
+    let bg = bg.expect("a fallback background");
+    let first_is_global = settings.first().is_some_and(|s| truthy(s.get("settings")) && !truthy(s.get("scope")));
     if !first_is_global {
         settings.insert(0, json!({ "settings": { "foreground": fg, "background": bg } }));
     }
@@ -106,13 +105,13 @@ pub fn normalize_theme(raw: &Value) -> Result<NormalizedTheme, String> {
         let mut inner = inner.clone();
         for (key, enabled) in [("foreground", replace_fg), ("background", replace_bg)] {
             if enabled {
-                let original = inner[key].as_str().unwrap().to_string();
+                let original = inner[key].as_str().expect("checked a string").to_string();
                 let hex = replacement_for(&original, &color_replacements);
                 color_replacements.insert(hex.clone(), Value::String(original));
                 inner.insert(key.into(), Value::String(hex));
             }
         }
-        setting.as_object_mut().unwrap().insert("settings".into(), Value::Object(inner));
+        setting.as_object_mut().expect("checked an object").insert("settings".into(), Value::Object(inner));
     }
     let keys: Vec<String> = colors.keys().cloned().collect();
     for key in keys {
@@ -127,13 +126,11 @@ pub fn normalize_theme(raw: &Value) -> Result<NormalizedTheme, String> {
     }
     Ok(NormalizedTheme {
         name: non_empty(theme.get("name")).unwrap_or_default(),
+        theme_type,
         fg,
         bg,
         settings,
-        color_replacements: color_replacements
-            .into_iter()
-            .filter_map(|(k, v)| v.as_str().map(|v| (k, v.to_string())))
-            .collect(),
+        color_replacements: color_replacements.into_iter().filter_map(|(k, v)| v.as_str().map(|v| (k, v.to_string()))).collect(),
     })
 }
 
@@ -248,7 +245,7 @@ impl TrieElement {
             };
             self.children.insert(head.to_string(), child);
         }
-        self.children.get_mut(head).unwrap().insert(scope_depth + 1, tail, parent_scopes, font_style, foreground, background);
+        self.children.get_mut(head).expect("inserted above").insert(scope_depth + 1, tail, parent_scopes, font_style, foreground, background);
     }
 
     fn insert_here(&mut self, scope_depth: u32, parent_scopes: Option<Rc<[Rc<str>]>>, mut font_style: i32, mut foreground: u32, mut background: u32) {
@@ -403,7 +400,7 @@ fn scope_path_matches_parent_scopes(mut path: Option<&ScopeStack>, parent_scopes
             }
             path = node.parent.as_deref();
         }
-        path = path.unwrap().parent.as_deref();
+        path = path.expect("checked a path").parent.as_deref();
         index += 1;
     }
     true
@@ -469,20 +466,9 @@ fn parse_theme(settings: &[Value]) -> Vec<ParsedRule> {
         for scope in scopes {
             let trimmed = js_trim(&scope);
             let segments: Vec<&str> = trimmed.split(' ').collect();
-            let leaf = segments.last().unwrap().to_string();
-            let parent_scopes = if segments.len() > 1 {
-                Some(segments[..segments.len() - 1].iter().rev().map(|s| Rc::from(*s)).collect())
-            } else {
-                None
-            };
-            result.push(ParsedRule {
-                scope: leaf,
-                parent_scopes,
-                index,
-                font_style,
-                foreground: foreground.clone(),
-                background: background.clone(),
-            });
+            let leaf = segments.last().expect("split gives a segment").to_string();
+            let parent_scopes = if segments.len() > 1 { Some(segments[..segments.len() - 1].iter().rev().map(|s| Rc::from(*s)).collect()) } else { None };
+            result.push(ParsedRule { scope: leaf, parent_scopes, index, font_style, foreground: foreground.clone(), background: background.clone() });
         }
     }
     result
@@ -490,8 +476,6 @@ fn parse_theme(settings: &[Value]) -> Vec<ParsedRule> {
 
 /// `String.prototype.trim` (ECMAScript whitespace and line terminators).
 fn js_trim(s: &str) -> &str {
-    let is_space = |c: char| {
-        matches!(c, '\u{9}'..='\u{D}' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}')
-    };
+    let is_space = |c: char| matches!(c, '\u{9}'..='\u{D}' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}');
     s.trim_matches(is_space)
 }

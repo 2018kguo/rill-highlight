@@ -1,22 +1,22 @@
-//! C-ABI exports for the JavaScript package (`highlight/js/rill-highlight.js`).
+//! C-ABI exports for the JavaScript package (`js/src/wasm.js`).
 //!
-//! Handles are small integers. Strings go in as UTF-8 (JSON) or UTF-16 (code) in
-//! buffers from `rhl_alloc`; results come back in a buffer the caller reads
-//! before the next call.
+//! Registries, themes, highlighters and states are referred to by handles: small
+//! integers, 0 for none or failure. Strings go in as UTF-8 (JSON) or UTF-16 (code)
+//! in buffers from `rhl_alloc`. Text results and error messages come back in one
+//! buffer (`rhl_text`, `rhl_text_len`) that the caller reads before the next call.
 
-use crate::shiki::Highlighter;
-use crate::textmate::tokenizer::State;
+use crate::highlighter::{Highlighter, Registry, State, Theme};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 #[derive(Default)]
 struct Exports {
-    /// Grammar files collected for the next `rhl_highlighter_new`.
-    pending_grammars: Vec<String>,
-    themes: HashMap<u32, String>,
+    registries: HashMap<u32, Registry>,
+    themes: HashMap<u32, Rc<Theme>>,
     highlighters: HashMap<u32, Highlighter>,
     states: HashMap<u32, State>,
-    next_id: u32,
+    next_handle: u32,
     result: Vec<u32>,
     text: Vec<u8>,
 }
@@ -26,126 +26,160 @@ thread_local! {
 }
 
 impl Exports {
-    fn id(&mut self) -> u32 {
-        self.next_id += 1;
-        self.next_id
+    fn handle(&mut self) -> u32 {
+        self.next_handle += 1;
+        self.next_handle
     }
 
-    fn set_text(&mut self, text: &str) -> *const u8 {
+    fn set_text(&mut self, text: &str) {
         self.text.clear();
         self.text.extend_from_slice(text.as_bytes());
-        self.text.as_ptr()
+    }
+
+    /// Records `error` as the text and returns the failure handle.
+    fn fail(&mut self, error: &str) -> u32 {
+        self.set_text(error);
+        0
     }
 }
 
-/// Allocates `len` bytes for the caller to fill.
+/// Allocates `length` bytes for the caller to fill.
 #[unsafe(no_mangle)]
-pub extern "C" fn rhl_alloc(len: usize) -> *mut u8 {
-    let mut buffer = Vec::<u8>::with_capacity(len.max(1));
-    let ptr = buffer.as_mut_ptr();
+pub extern "C" fn rhl_alloc(length: usize) -> *mut u8 {
+    let mut buffer = Vec::<u8>::with_capacity(length.max(1));
+    let pointer = buffer.as_mut_ptr();
     std::mem::forget(buffer);
-    ptr
+    pointer
 }
 
 /// Frees a buffer from `rhl_alloc`.
 ///
 /// # Safety
-/// `ptr` and `len` must come from one `rhl_alloc` call.
+/// `pointer` and `length` must come from one `rhl_alloc` call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rhl_free(ptr: *mut u8, len: usize) {
-    drop(unsafe { Vec::from_raw_parts(ptr, 0, len.max(1)) });
+pub unsafe extern "C" fn rhl_free(pointer: *mut u8, length: usize) {
+    drop(unsafe { Vec::from_raw_parts(pointer, 0, length.max(1)) });
 }
 
-unsafe fn read_utf8(ptr: *const u8, len: usize) -> String {
-    String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) }).into_owned()
+unsafe fn read_utf8(pointer: *const u8, length: usize) -> String {
+    String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(pointer, length) }).into_owned()
 }
 
-/// Queues one grammar file (UTF-8 JSON) for the next `rhl_highlighter_new`.
-///
-/// # Safety
-/// `ptr..ptr+len` must be readable.
+/// Creates an empty grammar registry.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rhl_add_grammar(ptr: *const u8, len: usize) {
-    let text = unsafe { read_utf8(ptr, len) };
-    EXPORTS.with_borrow_mut(|e| e.pending_grammars.push(text));
-}
-
-/// Registers a theme (UTF-8 JSON); returns its handle.
-///
-/// # Safety
-/// `ptr..ptr+len` must be readable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rhl_add_theme(ptr: *const u8, len: usize) -> u32 {
-    let text = unsafe { read_utf8(ptr, len) };
-    EXPORTS.with_borrow_mut(|e| {
-        let id = e.id();
-        e.themes.insert(id, text);
-        id
+pub extern "C" fn rhl_registry_new() -> u32 {
+    EXPORTS.with_borrow_mut(|exports| {
+        let handle = exports.handle();
+        exports.registries.insert(handle, Registry::default());
+        handle
     })
 }
 
-/// Creates a highlighter for the grammar named `name` from the queued grammar
-/// files and two themes. Returns 0 on error (see `rhl_error`).
+/// Adds a grammar file (UTF-8 JSON) to a registry. Returns 1, or 0 on error.
 ///
 /// # Safety
-/// `ptr..ptr+len` must be readable.
+/// `pointer..pointer + length` must be readable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rhl_highlighter_new(ptr: *const u8, len: usize, light: u32, dark: u32) -> u32 {
-    let name = unsafe { read_utf8(ptr, len) };
-    EXPORTS.with_borrow_mut(|e| {
-        let grammars = std::mem::take(&mut e.pending_grammars);
-        let refs: Vec<&str> = grammars.iter().map(String::as_str).collect();
-        let (Some(light), Some(dark)) = (e.themes.get(&light), e.themes.get(&dark)) else {
-            e.set_text("unknown theme");
-            return 0;
+pub unsafe extern "C" fn rhl_registry_add_grammar(registry: u32, pointer: *const u8, length: usize) -> u32 {
+    let text = unsafe { read_utf8(pointer, length) };
+    EXPORTS.with_borrow_mut(|exports| {
+        let Some(target) = exports.registries.get_mut(&registry) else { return exports.fail("unknown registry") };
+        match target.add_grammar(&text) {
+            Ok(()) => 1,
+            Err(error) => exports.fail(error.message()),
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rhl_registry_free(registry: u32) {
+    EXPORTS.with_borrow_mut(|exports| exports.registries.remove(&registry));
+}
+
+/// Loads a theme (UTF-8 JSON). Returns its handle and sets the text to its
+/// normalized `[name, type, fg, bg, colorReplacements]`, or returns 0.
+///
+/// # Safety
+/// `pointer..pointer + length` must be readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rhl_theme_new(pointer: *const u8, length: usize) -> u32 {
+    let text = unsafe { read_utf8(pointer, length) };
+    EXPORTS.with_borrow_mut(|exports| match Theme::from_json(&text) {
+        Ok(theme) => {
+            let info = (theme.name(), theme.theme_type(), theme.foreground(), theme.background(), theme.color_replacements());
+            exports.set_text(&serde_json::to_string(&info).unwrap_or_default());
+            let handle = exports.handle();
+            exports.themes.insert(handle, Rc::new(theme));
+            handle
+        }
+        Err(error) => exports.fail(error.message()),
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rhl_theme_free(theme: u32) {
+    EXPORTS.with_borrow_mut(|exports| exports.themes.remove(&theme));
+}
+
+/// Creates a highlighter for the grammar named `name` in `registry` with
+/// `theme_count` theme handles at `themes`. Returns 0 on error.
+///
+/// # Safety
+/// `name..name + name_length` and `themes..themes + theme_count` must be readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rhl_highlighter_new(registry: u32, name: *const u8, name_length: usize, themes: *const u32, theme_count: usize) -> u32 {
+    let name = unsafe { read_utf8(name, name_length) };
+    let theme_handles = unsafe { std::slice::from_raw_parts(themes, theme_count) };
+    EXPORTS.with_borrow_mut(|exports| {
+        let Some(themes) = theme_handles.iter().map(|handle| exports.themes.get(handle).cloned()).collect::<Option<Vec<_>>>() else {
+            return exports.fail("unknown theme");
         };
-        match Highlighter::new(&refs, &name, [light, dark]) {
+        let Some(source) = exports.registries.get(&registry) else { return exports.fail("unknown registry") };
+        match Highlighter::new(source, &name, themes) {
             Ok(highlighter) => {
-                let id = e.id();
-                e.highlighters.insert(id, highlighter);
-                id
+                let handle = exports.handle();
+                exports.highlighters.insert(handle, highlighter);
+                handle
             }
-            Err(error) => {
-                e.set_text(&error);
-                0
-            }
+            Err(error) => exports.fail(error.message()),
         }
     })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rhl_highlighter_free(highlighter: u32) {
-    EXPORTS.with_borrow_mut(|e| e.highlighters.remove(&highlighter));
+    EXPORTS.with_borrow_mut(|exports| exports.highlighters.remove(&highlighter));
 }
 
-/// Tokenizes UTF-16 `code` after grammar state `state` (0: initial). Returns a
-/// pointer to u32s: [state handle (0: initial), line count, then per line the
-/// token count and (offset, length, style) per token], or null on error.
+/// Tokenizes UTF-16 `code` after grammar state `state` (0: initial), skipping
+/// lines of `max_line_length` units or more when it is not 0. Returns a pointer
+/// to u32s: [state handle (0: initial), line count, then per line the token count
+/// and (offset, length, style) per token], or null on error.
 ///
 /// # Safety
-/// `ptr..ptr+len*2` must be readable UTF-16.
+/// `code..code + length` must be readable UTF-16.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rhl_tokenize(highlighter: u32, ptr: *const u16, len: usize, state: u32) -> *const u32 {
-    let code = unsafe { std::slice::from_raw_parts(ptr, len) };
-    EXPORTS.with_borrow_mut(|e| {
-        let previous = if state == 0 { None } else { e.states.get(&state).cloned() };
-        let Some(h) = e.highlighters.get_mut(&highlighter) else {
-            e.set_text("unknown highlighter");
+pub unsafe extern "C" fn rhl_tokenize(highlighter: u32, code: *const u16, length: usize, state: u32, max_line_length: usize) -> *const u32 {
+    let code = unsafe { std::slice::from_raw_parts(code, length) };
+    EXPORTS.with_borrow_mut(|exports| {
+        let previous = if state == 0 { None } else { exports.states.get(&state).cloned() };
+        let Some(target) = exports.highlighters.get_mut(&highlighter) else {
+            exports.fail("unknown highlighter");
             return std::ptr::null();
         };
-        match h.tokenize(code, previous.as_ref()) {
+        match target.tokenize(code, previous.as_ref(), max_line_length) {
             Ok(tokenized) => {
-                let state_id = match tokenized.state {
+                let state_handle = match tokenized.state {
                     Some(state) => {
-                        let id = e.id();
-                        e.states.insert(id, state);
-                        id
+                        let handle = exports.handle();
+                        exports.states.insert(handle, state);
+                        handle
                     }
                     None => 0,
                 };
-                let result = &mut e.result;
+                let result = &mut exports.result;
                 result.clear();
-                result.push(state_id);
+                result.push(state_handle);
                 result.push(tokenized.lines.len() as u32);
                 for line in &tokenized.lines {
                     result.push(line.len() as u32);
@@ -153,10 +187,10 @@ pub unsafe extern "C" fn rhl_tokenize(highlighter: u32, ptr: *const u16, len: us
                         result.extend_from_slice(&[token.offset, token.length, token.style]);
                     }
                 }
-                e.result.as_ptr()
+                result.as_ptr()
             }
             Err(error) => {
-                e.set_text(&error);
+                exports.fail(error.message());
                 std::ptr::null()
             }
         }
@@ -166,48 +200,43 @@ pub unsafe extern "C" fn rhl_tokenize(highlighter: u32, ptr: *const u16, len: us
 /// Releases a grammar state handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn rhl_state_free(state: u32) {
-    EXPORTS.with_borrow_mut(|e| e.states.remove(&state));
+    EXPORTS.with_borrow_mut(|exports| exports.states.remove(&state));
 }
 
-/// The `htmlStyle` objects of styles `from..` of a highlighter, as a JSON array
-/// of [property, value] pair arrays. Sets the text buffer; returns its length.
+/// Sets the text to a state's scope names (innermost first) as a JSON array;
+/// returns its length.
+#[unsafe(no_mangle)]
+pub extern "C" fn rhl_state_scopes(state: u32) -> usize {
+    EXPORTS.with_borrow_mut(|exports| {
+        let scopes = exports.states.get(&state).map(State::scopes).unwrap_or_default();
+        let scopes: Vec<&str> = scopes.iter().map(|scope| &**scope).collect();
+        exports.set_text(&serde_json::to_string(&scopes).unwrap_or_default());
+        exports.text.len()
+    })
+}
+
+/// Sets the text to the styles `from..` of a highlighter, as a JSON array with,
+/// per style, a `[color or null, font style]` pair per theme; returns its length.
 #[unsafe(no_mangle)]
 pub extern "C" fn rhl_styles(highlighter: u32, from: u32) -> usize {
-    EXPORTS.with_borrow_mut(|e| {
-        let Some(h) = e.highlighters.get(&highlighter) else { return 0 };
-        let styles: Vec<Vec<[&str; 2]>> = h.styles[from as usize..].iter().map(|s| s.iter().map(|(k, v)| [k.as_str(), v.as_str()]).collect()).collect();
+    EXPORTS.with_borrow_mut(|exports| {
+        let Some(target) = exports.highlighters.get(&highlighter) else { return 0 };
+        let styles: Vec<Vec<(Option<&str>, u32)>> =
+            target.styles()[from as usize..].iter().map(|style| style.iter().map(|theme| (theme.color.as_deref(), theme.font_style)).collect()).collect();
         let text = serde_json::to_string(&styles).unwrap_or_default();
-        e.set_text(&text);
-        e.text.len()
+        exports.set_text(&text);
+        exports.text.len()
     })
 }
 
-/// The `fg`, `bg` and `themeName` of a highlighter's results, as a JSON array.
-/// Sets the text buffer; returns its length.
-#[unsafe(no_mangle)]
-pub extern "C" fn rhl_colors(highlighter: u32) -> usize {
-    EXPORTS.with_borrow_mut(|e| {
-        let Some(h) = e.highlighters.get(&highlighter) else { return 0 };
-        let (light, dark) = (h.theme(0), h.theme(1));
-        let colors = [
-            format!("{};--shiki-dark:{}", light.fg, dark.fg),
-            format!("{};--shiki-dark-bg:{}", light.bg, dark.bg),
-            format!("shiki-themes {} {}", light.name, dark.name),
-        ];
-        let text = serde_json::to_string(&colors).unwrap_or_default();
-        e.set_text(&text);
-        e.text.len()
-    })
-}
-
-/// Pointer to the text buffer set by the last call that returned text or failed.
+/// Pointer to the text buffer.
 #[unsafe(no_mangle)]
 pub extern "C" fn rhl_text() -> *const u8 {
-    EXPORTS.with_borrow(|e| e.text.as_ptr())
+    EXPORTS.with_borrow(|exports| exports.text.as_ptr())
 }
 
 /// Length of the text buffer (the last error message after a failure).
 #[unsafe(no_mangle)]
 pub extern "C" fn rhl_text_len() -> usize {
-    EXPORTS.with_borrow(|e| e.text.len())
+    EXPORTS.with_borrow(|exports| exports.text.len())
 }

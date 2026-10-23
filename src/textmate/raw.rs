@@ -66,7 +66,7 @@ fn truthy(value: Option<&Value>) -> bool {
 fn js_ordered(map: &Map<String, Value>) -> Vec<(&String, &Value)> {
     let is_index = |k: &str| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()) && (k == "0" || !k.starts_with('0')) && k.len() < 10;
     let mut indices: Vec<(&String, &Value)> = map.iter().filter(|(k, _)| is_index(k)).collect();
-    indices.sort_by_key(|(k, _)| k.parse::<u64>().unwrap());
+    indices.sort_by_key(|(k, _)| k.parse::<u64>().expect("an index key"));
     indices.extend(map.iter().filter(|(k, _)| !is_index(k)));
     indices
 }
@@ -95,11 +95,7 @@ impl RawGrammar {
                 }
             }
         }
-        grammar.nodes[SELF_NODE as usize] = RawRule {
-            name: Some(scope_name),
-            patterns: root.patterns.clone(),
-            ..RawRule::default()
-        };
+        grammar.nodes[SELF_NODE as usize] = RawRule { name: Some(scope_name), patterns: root.patterns.clone(), ..RawRule::default() };
         grammar.nodes[ROOT_NODE as usize] = root;
         Ok(grammar)
     }

@@ -11,42 +11,98 @@ use super::parse::{Assertion, Node};
 #[derive(Debug, Clone)]
 pub enum Inst {
     /// One UTF-16 code unit that is not a surrogate (a BMP character).
-    Unit { unit: u16, back: bool },
+    Unit {
+        unit: u16,
+        back: bool,
+    },
     /// Either of two BMP code units (an ASCII letter under `i`).
-    Unit2 { a: u16, b: u16, back: bool },
+    Unit2 {
+        a: u16,
+        b: u16,
+        back: bool,
+    },
     /// One code point from a set.
-    Set { set: u32, back: bool },
+    Set {
+        set: u32,
+        back: bool,
+    },
     /// A run of one-character matches with no captures inside: matched as a loop
     /// that backtracks one character at a time. `follow` (an index into
     /// `Program::follows`, or `NO_FOLLOW`) constrains the code unit right after the
     /// run, so positions where the rest of the pattern cannot match are skipped.
-    SetRepeat { set: u32, min: u32, max: u32, greedy: bool, back: bool, possessive: bool, follow: u32 },
+    SetRepeat {
+        set: u32,
+        min: u32,
+        max: u32,
+        greedy: bool,
+        back: bool,
+        possessive: bool,
+        follow: u32,
+    },
     /// Tries the alternatives of `Program::alt_tables[table]` in order.
-    AltTable { table: u32 },
+    AltTable {
+        table: u32,
+    },
     /// Try `next` first; on failure resume at `alt` at the same position.
-    Split { alt: u32 },
-    Jump { to: u32 },
-    Save { slot: u32 },
+    Split {
+        alt: u32,
+    },
+    Jump {
+        to: u32,
+    },
+    Save {
+        slot: u32,
+    },
     /// Sets the captures `from..to` (group numbers) to undefined.
-    ClearCaptures { from: u32, to: u32 },
+    ClearCaptures {
+        from: u32,
+        to: u32,
+    },
     /// Starts a counted loop: iteration count 0.
-    LoopInit { reg: u32 },
+    LoopInit {
+        reg: u32,
+    },
     /// Decides whether to run another iteration of a loop whose body starts at
     /// the next instruction and which continues at `exit`.
-    LoopTest { reg: u32, min: u32, max: u32, greedy: bool, exit: u32 },
+    LoopTest {
+        reg: u32,
+        min: u32,
+        max: u32,
+        greedy: bool,
+        exit: u32,
+    },
     /// Begins an iteration (taken directly or as the lazy alternative).
-    LoopEnter { reg: u32, clear_from: u32, clear_to: u32 },
+    LoopEnter {
+        reg: u32,
+        clear_from: u32,
+        clear_to: u32,
+    },
     /// Ends an iteration: fails if it matched empty past the minimum, else loops.
-    LoopEnd { reg: u32, min: u32, test: u32 },
+    LoopEnd {
+        reg: u32,
+        min: u32,
+        test: u32,
+    },
     Assert(Assertion),
     /// Runs the lookaround body at `body` (which ends with `LookEnd`), then goes on
     /// at `next`.
-    Look { body: u32, next: u32, negate: bool },
+    Look {
+        body: u32,
+        next: u32,
+        negate: bool,
+    },
     LookEnd,
     /// Runs the body at `body` (ending with `LookEnd`) once, atomically, and goes on
     /// at `next` from where it ended.
-    Atomic { body: u32, next: u32 },
-    Backref { groups: u32, ignore_case: bool, back: bool },
+    Atomic {
+        body: u32,
+        next: u32,
+    },
+    Backref {
+        groups: u32,
+        ignore_case: bool,
+        back: bool,
+    },
     Match,
 }
 
@@ -172,11 +228,7 @@ impl RuntimeSet {
 
     #[inline]
     pub fn contains(&self, c: u32) -> bool {
-        if c < 0x80 {
-            self.ascii[(c >> 6) as usize] & (1 << (c & 63)) != 0
-        } else {
-            self.non_ascii && self.set.contains(c)
-        }
+        if c < 0x80 { self.ascii[(c >> 6) as usize] & (1 << (c & 63)) != 0 } else { self.non_ascii && self.set.contains(c) }
     }
 }
 
@@ -190,11 +242,7 @@ pub struct FirstUnits {
 impl FirstUnits {
     #[inline]
     pub fn may_start(&self, unit: u16) -> bool {
-        if unit < 0x80 {
-            self.ascii[(unit >> 6) as usize] & (1 << (unit & 63)) != 0
-        } else {
-            self.non_ascii
-        }
+        if unit < 0x80 { self.ascii[(unit >> 6) as usize] & (1 << (unit & 63)) != 0 } else { self.non_ascii }
     }
 
     fn none() -> Self {
@@ -259,10 +307,11 @@ impl Compiler {
         let ranges = set.ranges();
         let is_unit = |c: u32| c < 0xD800 || (0xE000..0x10000).contains(&c);
         if let Some(c) = set.as_single()
-            && is_unit(c) {
-                self.insts.push(Inst::Unit { unit: c as u16, back });
-                return;
-            }
+            && is_unit(c)
+        {
+            self.insts.push(Inst::Unit { unit: c as u16, back });
+            return;
+        }
         if set.len() == 2 {
             let members: Vec<u32> = ranges.iter().flat_map(|&(lo, hi)| lo..=hi).collect();
             if members.iter().all(|&c| is_unit(c)) {
@@ -368,17 +417,18 @@ impl Compiler {
             other => (None, other),
         };
         if let Node::Repeat { min, max, greedy: true, body: repeated } = inner
-            && let Node::Set(set) = repeated.as_ref() {
-                let set = self.add_set(set);
-                if let Some(index) = capture {
-                    self.insts.push(Inst::Save { slot: index * 2 });
-                }
-                self.insts.push(Inst::SetRepeat { set, min: *min, max: *max, greedy: true, back, possessive: true, follow: NO_FOLLOW });
-                if let Some(index) = capture {
-                    self.insts.push(Inst::Save { slot: index * 2 + 1 });
-                }
-                return;
+            && let Node::Set(set) = repeated.as_ref()
+        {
+            let set = self.add_set(set);
+            if let Some(index) = capture {
+                self.insts.push(Inst::Save { slot: index * 2 });
             }
+            self.insts.push(Inst::SetRepeat { set, min: *min, max: *max, greedy: true, back, possessive: true, follow: NO_FOLLOW });
+            if let Some(index) = capture {
+                self.insts.push(Inst::Save { slot: index * 2 + 1 });
+            }
+            return;
+        }
         let atomic = self.pc();
         self.insts.push(Inst::Atomic { body: atomic + 1, next: 0 });
         self.emit_node(body, back, None);
@@ -482,13 +532,14 @@ fn recognize_atomic(node: Node, back: bool) -> Node {
                 let item = recognize_atomic(item, back);
                 if !back
                     && let Node::Backref { groups, .. } = &item
-                        && let [group] = groups.as_slice()
-                            && let Some(Node::Look { behind: false, negate: false, body }) = out.last()
-                                && matches!(body.as_ref(), Node::Capture { index, .. } if index == group) {
-                                    let Some(Node::Look { body, .. }) = out.pop() else { unreachable!() };
-                                    out.push(Node::Atomic(body));
-                                    continue;
-                                }
+                    && let [group] = groups.as_slice()
+                    && let Some(Node::Look { behind: false, negate: false, body }) = out.last()
+                    && matches!(body.as_ref(), Node::Capture { index, .. } if index == group)
+                {
+                    let Some(Node::Look { body, .. }) = out.pop() else { unreachable!() };
+                    out.push(Node::Atomic(body));
+                    continue;
+                }
                 out.push(item);
             }
             Node::Seq(out)
