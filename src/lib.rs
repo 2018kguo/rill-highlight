@@ -23,6 +23,8 @@
 
 mod fxhash;
 mod highlighter;
+#[doc(hidden)]
+pub mod ops;
 pub mod regex;
 mod textmate;
 

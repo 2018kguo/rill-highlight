@@ -51,6 +51,21 @@ pub struct StateNode {
 
 pub type State = Rc<StateNode>;
 
+impl Drop for StateNode {
+    /// Unlinks the parents this node held the last reference to one by one: the
+    /// default drop recurses once per level, which overflowed the (1 MB wasm) stack
+    /// on code nested some thousands of levels deep, which Shiki highlights.
+    fn drop(&mut self) {
+        let mut parent = self.parent.take();
+        while let Some(node) = parent {
+            match Rc::try_unwrap(node) {
+                Ok(mut node) => parent = node.parent.take(),
+                Err(_) => break,
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn push_state(
     parent: Option<&State>,
@@ -109,6 +124,7 @@ fn with_end_rule(state: &State, end_rule: Rc<EndRule>) -> State {
 fn has_same_rule_as(this: &State, other: &State) -> bool {
     let mut node = Some(this);
     while let Some(el) = node {
+        crate::ops::add(1);
         if el.enter_pos.get() != other.enter_pos.get() {
             break;
         }
@@ -267,6 +283,7 @@ impl Tokenizer<'_> {
             Some(state) => {
                 let mut node = Some(state);
                 while let Some(el) = node {
+                    crate::ops::add(1);
                     el.enter_pos.set(-1);
                     el.anchor_pos.set(-1);
                     node = el.parent.as_ref();
@@ -277,8 +294,9 @@ impl Tokenizer<'_> {
         let mut content = Vec::with_capacity(line.len() + 1);
         content.extend_from_slice(line);
         content.push(0x0A);
+        crate::ops::add(content.len());
         let string = self.grammar.new_string(content);
-        let line_length = string.content.len();
+        let line_length = string.content().len();
         let mut tokens = LineTokens::new(self.themes.len());
         let state = self.tokenize_string(&string, is_first_line, 0, state, &mut tokens, true)?;
         Ok((tokens, state, line_length))
@@ -293,7 +311,7 @@ impl Tokenizer<'_> {
         tokens: &mut LineTokens,
         check_while: bool,
     ) -> Result<State> {
-        let line_length = line.content.len();
+        let line_length = line.content().len();
         let mut anchor_position: i64 = -1;
         if check_while {
             let result = self.check_while_conditions(line, is_first_line, line_pos, stack, tokens)?;
@@ -331,7 +349,7 @@ impl Tokenizer<'_> {
                 let rule_id = found.rule_id as RuleId;
                 tokens.produce(&stack, match_start);
                 let before_push = stack.clone();
-                let scope_name = self.grammar.rule(rule_id).name(Some(&line.content), Some(captures));
+                let scope_name = self.grammar.rule(rule_id).name(Some(line.content()), Some(captures));
                 let name_scopes = self.push_attributed(&stack.content_name_scopes, scope_name.as_deref());
                 stack = push_state(
                     Some(&stack),
@@ -363,7 +381,7 @@ impl Tokenizer<'_> {
                         self.handle_captures(line, is_first_line, &stack, tokens, &begin_captures, captures)?;
                         tokens.produce(&stack, match_end);
                         anchor_position = match_end as i64;
-                        let content_name = self.grammar.rule(rule_id).content_name(&line.content, captures);
+                        let content_name = self.grammar.rule(rule_id).content_name(line.content(), captures);
                         let content_scopes = self.push_attributed(&name_scopes, content_name.as_deref());
                         stack = with_content_name_scopes(&stack, content_scopes);
                         if back_references {
@@ -374,7 +392,7 @@ impl Tokenizer<'_> {
                                         Vec::new()
                                     } else {
                                         let (s, e) = ((start as usize).min(line_length), (end as usize).min(line_length));
-                                        line.content[s..e.max(s)].to_vec()
+                                        line.content()[s..e.max(s)].to_vec()
                                     }
                                 })
                                 .collect();
@@ -419,6 +437,7 @@ impl Tokenizer<'_> {
         let mut while_rules = Vec::new();
         let mut node = Some(stack.clone());
         while let Some(el) = node {
+            crate::ops::add(1);
             if matches!(self.grammar.rule(el.rule_id).kind, RuleKind::BeginWhile { .. }) {
                 while_rules.push(el.clone());
             }
@@ -495,6 +514,7 @@ impl Tokenizer<'_> {
         let mut best: Option<ScanMatch> = None;
         let mut best_priority = 0;
         let names = stack.content_name_scopes.scope_names();
+        crate::ops::add(names.len());
         let scopes: Vec<&str> = names.iter().map(|s| &**s).collect();
         for i in 0..self.grammar.injections.len() {
             let injection = &self.grammar.injections[i];
@@ -560,16 +580,16 @@ impl Tokenizer<'_> {
                 _ => 0,
             };
             if retokenize != 0 {
-                let scope_name = rule.name(Some(&line.content), Some(indices));
-                let content_name = rule.content_name(&line.content, indices);
+                let scope_name = rule.name(Some(line.content()), Some(indices));
+                let content_name = rule.content_name(line.content(), indices);
                 let name_scopes = self.push_attributed(&stack.content_name_scopes, scope_name.as_deref());
                 let content_scopes = self.push_attributed(&name_scopes, content_name.as_deref());
                 let pushed = push_state(Some(stack), retokenize, start as i64, -1, false, None, name_scopes, content_scopes);
-                let sub = self.grammar.new_string(line.content[..end.min(line.content.len())].to_vec());
+                let sub = self.grammar.prefix_string(line, end);
                 self.tokenize_string(&sub, is_first_line && start == 0, start, pushed, tokens, false)?;
                 continue;
             }
-            if let Some(name) = rule.name(Some(&line.content), Some(indices)) {
+            if let Some(name) = rule.name(Some(line.content()), Some(indices)) {
                 let base = local.last().map_or_else(|| stack.content_name_scopes.clone(), |(scopes, _)| scopes.clone());
                 let scopes = self.push_attributed(&base, Some(&name));
                 local.push((scopes, end));

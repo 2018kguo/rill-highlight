@@ -21,3 +21,9 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 [features]
 # The C-ABI exports the JavaScript package loads (`rhl_*`, see src/wasm.rs).
 wasm-exports = []
+# Operation counts for the doubling tests (`cargo test --features op-counts`).
+op-counts = []
+
+[[example]]
+name = "doubling_probe"
+required-features = ["op-counts"]

@@ -44,6 +44,10 @@ jobs:
       - run: npm run build
       - run: cargo test --test grammars
         working-directory: .
+      # Tokenizing work grows linearly with the input (operation counts at n, 2n,
+      # 4n on long lines, many lines, deep nesting; see tests/doubling.rs).
+      - run: cargo test --release --features op-counts --test doubling
+        working-directory: .
       # API behavior, tokens and HTML vs Shiki 4.5.0 on the checked-in edge
       # corpus, streaming prefixes for three languages, and the packed tarball.
       - run: npm run test:ci

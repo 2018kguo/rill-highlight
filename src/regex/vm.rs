@@ -61,6 +61,7 @@ impl Matcher {
     /// Whether `literal` occurs in `input` at or after `pos`.
     fn has_literal(&mut self, literal: &[(u16, u16)], input: &[u16], pos: usize) -> bool {
         let Some(id) = self.input_id.filter(|_| input.len() - pos >= MIN_REMEMBERED_SCAN) else {
+            crate::ops::add(input.len() - pos);
             return find_literal(&input[pos..], literal).is_some();
         };
         let key = (literal.as_ptr() as usize, id, input.len());
@@ -72,6 +73,7 @@ impl Matcher {
             }
         }
         let next = find_literal(&input[pos..], literal).map(|index| index + pos);
+        crate::ops::add(next.unwrap_or(input.len()) - pos);
         if self.literal_scans.len() >= MAX_LITERAL_SCANS {
             self.literal_scans.clear();
         }
@@ -187,6 +189,7 @@ impl Matcher {
             Some(first) => {
                 let end = len.min(limit.saturating_add(1));
                 while pos < end {
+                    crate::ops::add(1);
                     let unit = input[pos];
                     if first.may_start(unit) && !(is_trail(unit) && pos > start && is_lead(input[pos - 1])) && self.attempt(program, input, pos, captures) {
                         return true;
@@ -196,6 +199,7 @@ impl Matcher {
                 false
             }
             None => loop {
+                crate::ops::add(1);
                 if pos > limit {
                     return false;
                 }
@@ -227,6 +231,7 @@ impl Matcher {
     fn run(&mut self, program: &Program, input: &[u16], mut pc: usize, mut pos: usize, base: usize, captures: &mut Vec<i32>) -> Option<usize> {
         let insts = &program.insts;
         loop {
+            crate::ops::add(1);
             let ok = match &insts[pc] {
                 Inst::Unit { unit, back } => {
                     if *back {
@@ -302,6 +307,7 @@ impl Matcher {
                                 position = prev_char(input, position).expect("not at the start").1;
                             }
                         }
+                        crate::ops::add(count as usize);
                         if position == min_pos && follow.is_some_and(|follow| !may_follow(follow, input, position)) {
                             false
                         } else {
@@ -331,6 +337,7 @@ impl Matcher {
                                 }
                             }
                         }
+                        crate::ops::add(position.abs_diff(pos));
                         if ok {
                             if remaining > 0 {
                                 self.stack.push(Frame::LazyStar { pc: pc as u32 + 1, pos: position as u32, remaining });
@@ -471,6 +478,7 @@ impl Matcher {
             }
             // Backtrack.
             loop {
+                crate::ops::add(1);
                 if self.stack.len() == base {
                     return None;
                 }
@@ -502,6 +510,7 @@ impl Matcher {
                                 continue;
                             }
                         }
+                        crate::ops::add(previous.abs_diff(at as usize));
                         if previous as u32 != min_pos {
                             self.stack.push(Frame::Star { pc: resume, min_pos, pos: previous as u32 });
                         }
@@ -532,6 +541,7 @@ impl Matcher {
                                 break;
                             }
                         }
+                        crate::ops::add(position.abs_diff(at as usize));
                         if ok {
                             if remaining > 0 {
                                 self.stack.push(Frame::LazyStar { pc: resume, pos: position as u32, remaining });

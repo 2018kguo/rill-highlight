@@ -263,7 +263,7 @@ impl FirstUnits {
 
 pub fn compile(node: Node, group_count: u32) -> Program {
     clear_memo();
-    let node = &recognize_atomic(node, false);
+    let node = &guard_lookbehinds(recognize_atomic(node, false));
     let mut compiler = Compiler { insts: Vec::new(), alt_tables: Vec::new(), sets: Vec::new(), follows: Vec::new(), backref_groups: Vec::new(), loop_count: 0 };
     compiler.emit_node(node, false, None);
     compiler.insts.push(Inst::Match);
@@ -549,6 +549,73 @@ fn recognize_atomic(node: Node, back: bool) -> Node {
         Node::Look { behind, negate, body } => Node::Look { behind, negate, body: Box::new(recognize_atomic(*body, behind)) },
         Node::Repeat { min, max, greedy, body } => Node::Repeat { min, max, greedy, body: Box::new(recognize_atomic(*body, back)) },
         other => other,
+    }
+}
+
+/// Puts a copy of what follows a lookbehind with an unbounded body in front of it
+/// as a lookahead: `(?<=A*)B` becomes `(?=B')(?<=A*)B`, where `B'` is `B` without
+/// its captures. A lookbehind is zero-width and does not depend on what follows,
+/// so the match and captures are the same, but a position where `B` cannot match
+/// no longer scans back through `A*`. V8 rejects such positions before running the
+/// lookbehind (its quick checks look past zero-width nodes); without this, a line
+/// with many positions `B` could start at but does not (ahk's `\b(?<=...[^,]*)(Center|...)`
+/// on `$x $x ...`) took quadratic time where Shiki takes linear. Only applies when
+/// `B` cannot match empty and holds no backreference or lookbehind.
+fn guard_lookbehinds(node: Node) -> Node {
+    match node {
+        Node::Seq(items) => {
+            let items: Vec<Node> = items.into_iter().map(guard_lookbehinds).collect();
+            let mut out = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                if let Node::Look { behind: true, body, .. } = item
+                    && has_unbounded_repeat(body)
+                    && let Some(next) = items.get(index + 1)
+                    && !can_match_empty(next)
+                    && is_plain_continuation(next)
+                {
+                    out.push(Node::Look { behind: false, negate: false, body: Box::new(without_captures(next)) });
+                }
+                out.push(item.clone());
+            }
+            Node::Seq(out)
+        }
+        Node::Alt(items) => Node::Alt(items.into_iter().map(guard_lookbehinds).collect()),
+        Node::Capture { index, body } => Node::Capture { index, body: Box::new(guard_lookbehinds(*body)) },
+        Node::Look { behind, negate, body } => Node::Look { behind, negate, body: Box::new(guard_lookbehinds(*body)) },
+        Node::Repeat { min, max, greedy, body } => Node::Repeat { min, max, greedy, body: Box::new(guard_lookbehinds(*body)) },
+        Node::Atomic(body) => Node::Atomic(Box::new(guard_lookbehinds(*body))),
+        other => other,
+    }
+}
+
+fn has_unbounded_repeat(node: &Node) -> bool {
+    match node {
+        Node::Repeat { max, body, .. } => *max == u32::MAX || has_unbounded_repeat(body),
+        Node::Seq(items) | Node::Alt(items) => items.iter().any(has_unbounded_repeat),
+        Node::Capture { body, .. } | Node::Look { body, .. } | Node::Atomic(body) => has_unbounded_repeat(body),
+        _ => false,
+    }
+}
+
+/// Whether `node` holds no backreference and no lookbehind.
+fn is_plain_continuation(node: &Node) -> bool {
+    match node {
+        Node::Backref { .. } | Node::Look { behind: true, .. } => false,
+        Node::Seq(items) | Node::Alt(items) => items.iter().all(is_plain_continuation),
+        Node::Capture { body, .. } | Node::Look { body, .. } | Node::Atomic(body) | Node::Repeat { body, .. } => is_plain_continuation(body),
+        _ => true,
+    }
+}
+
+fn without_captures(node: &Node) -> Node {
+    match node {
+        Node::Capture { body, .. } => without_captures(body),
+        Node::Seq(items) => Node::Seq(items.iter().map(without_captures).collect()),
+        Node::Alt(items) => Node::Alt(items.iter().map(without_captures).collect()),
+        Node::Look { behind, negate, body } => Node::Look { behind: *behind, negate: *negate, body: Box::new(without_captures(body)) },
+        Node::Atomic(body) => Node::Atomic(Box::new(without_captures(body))),
+        Node::Repeat { min, max, greedy, body } => Node::Repeat { min: *min, max: *max, greedy: *greedy, body: Box::new(without_captures(body)) },
+        other => other.clone(),
     }
 }
 

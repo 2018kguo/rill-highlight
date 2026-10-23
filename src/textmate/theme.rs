@@ -364,6 +364,7 @@ impl Theme {
             let mut cache = self.cache.borrow_mut();
             cache.entry(path.name.clone()).or_insert_with(|| Rc::new(self.root.find(&path.name))).clone()
         };
+        crate::ops::add(1);
         let rule = rules.iter().find(|rule| scope_path_matches_parent_scopes(path.parent.as_deref(), &rule.parent_scopes))?;
         Some(StyleAttributes { font_style: rule.font_style, foreground: rule.foreground, background: rule.background })
     }
@@ -374,6 +375,19 @@ impl Theme {
 pub struct ScopeStack {
     pub parent: Option<Rc<ScopeStack>>,
     pub name: Rc<str>,
+}
+
+impl Drop for ScopeStack {
+    /// Iterative, as `StateNode`'s (a deep scope path would overflow the stack).
+    fn drop(&mut self) {
+        let mut parent = self.parent.take();
+        while let Some(node) = parent {
+            match Rc::try_unwrap(node) {
+                Ok(mut node) => parent = node.parent.take(),
+                Err(_) => break,
+            }
+        }
+    }
 }
 
 /// `_scopePathMatchesParentScopes` (`parent_scopes` nearest first).
@@ -391,6 +405,7 @@ fn scope_path_matches_parent_scopes(mut path: Option<&ScopeStack>, parent_scopes
             must_match = true;
         }
         loop {
+            crate::ops::add(1);
             let Some(node) = path else { return false };
             if matches_scope(&node.name, pattern) {
                 break;

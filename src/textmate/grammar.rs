@@ -350,10 +350,22 @@ struct SearchCacheEntry {
     captures: Vec<i32>,
 }
 
-/// A line (or a captured prefix of one) as the regex engine sees it.
+/// A line (or a captured prefix of one) as the regex engine sees it. A prefix
+/// shares the line's buffer: retokenizing a capture must not copy the line up to
+/// it, which made lines of many such captures quadratic (Shiki's substrings are
+/// slices too).
 pub struct OnigString {
     pub id: u64,
-    pub content: Vec<u16>,
+    buffer: Rc<[u16]>,
+    len: usize,
+}
+
+impl OnigString {
+    /// The code units the regexes see.
+    #[must_use]
+    pub fn content(&self) -> &[u16] {
+        &self.buffer[..self.len]
+    }
 }
 
 /// A scanner match: the matched rule and capture ranges (UNMATCHED for groups
@@ -846,7 +858,15 @@ impl Grammar {
 
     pub fn new_string(&mut self, content: Vec<u16>) -> OnigString {
         self.next_string_id += 1;
-        OnigString { id: self.next_string_id, content }
+        let len = content.len();
+        OnigString { id: self.next_string_id, buffer: Rc::from(content), len }
+    }
+
+    /// The first `end` code units of `string` (at most all of it), as a string of
+    /// its own (its searches are not the string's).
+    pub fn prefix_string(&mut self, string: &OnigString, end: usize) -> OnigString {
+        self.next_string_id += 1;
+        OnigString { id: self.next_string_id, buffer: string.buffer.clone(), len: end.min(string.len) }
     }
 
     /// `JavaScriptScanner.findNextMatchSync`, with the search cache kept per regex
@@ -892,7 +912,7 @@ impl Grammar {
                 }
                 self.execs += 1;
                 self.matcher.set_input_id(Some(string.id));
-                let found = regex.exec_bounded(&mut self.matcher, &string.content, search_from, limit, &mut self.raw_captures, &mut self.exec_result);
+                let found = regex.exec_bounded(&mut self.matcher, string.content(), search_from, limit, &mut self.raw_captures, &mut self.exec_result);
                 let entry = &mut self.search_cache[regex_index];
                 if search_from == start {
                     entry.searched_from = start;

@@ -308,6 +308,7 @@ impl Highlighter {
                 key |= token.2 << (PACKED_STYLE_BITS * theme as u32);
                 end = end.min(token.1);
             }
+            crate::ops::add(1);
             let style = self.style_id(key);
             out.push(Token { offset: line_offset + position as u32, length: (end - position) as u32, style });
             position = end;
