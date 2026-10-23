@@ -26,7 +26,7 @@ mod highlighter;
 pub mod regex;
 mod textmate;
 
-pub use highlighter::{Error, Highlighter, MAX_THEMES, Registry, State, Theme, ThemeStyle, Token, Tokenized, split_lines};
+pub use highlighter::{Error, Highlighter, MAX_THEMES, Registry, State, Theme, ThemeStyle, Token, Tokenized};
 
 #[cfg(feature = "wasm-exports")]
 pub mod wasm;

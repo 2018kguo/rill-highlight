@@ -34,11 +34,20 @@ pub struct EmulationOptions {
 }
 
 impl JsRegExp {
+    /// Compiles `pattern` with `flags` as `new RegExp(pattern, flags)` would,
+    /// with oniguruma-to-es's emulation `options`.
+    ///
+    /// # Errors
+    /// When the pattern is not valid in `u`/`v` mode, as V8 would throw.
     pub fn new(pattern: &str, flags: &str, options: &EmulationOptions) -> Result<Self, String> {
         Self::build(parse::parse(pattern, flags)?, flags, options)
     }
 
-    /// Compiles a back-reference template (see `parse::parse_with_placeholders`).
+    /// Compiles a back-reference template (see `parse::parse_with_placeholders`):
+    /// the placeholder `U+E000 + n` matches `values[n]` literally.
+    ///
+    /// # Errors
+    /// As [`JsRegExp::new`].
     pub fn with_placeholders(pattern: &str, flags: &str, options: &EmulationOptions, values: &[Vec<u16>]) -> Result<Self, String> {
         Self::build(parse::parse_with_placeholders(pattern, flags, Some(values))?, flags, options)
     }

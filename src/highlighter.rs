@@ -90,8 +90,7 @@ impl Registry {
 
     /// The scope name of the grammar named `name` (a grammar's `name` or
     /// `scopeName`).
-    #[must_use]
-    pub fn scope_name(&self, name: &str) -> Option<Rc<str>> {
+    fn scope_name(&self, name: &str) -> Option<Rc<str>> {
         self.inner.find(name).map(|grammar| grammar.scope_name.clone())
     }
 }
@@ -340,8 +339,7 @@ impl Highlighter {
 }
 
 /// Shiki `splitLines`: line ranges split at `\r?\n`.
-#[must_use]
-pub fn split_lines(code: &[u16]) -> Vec<(usize, usize)> {
+fn split_lines(code: &[u16]) -> Vec<(usize, usize)> {
     let mut lines = Vec::new();
     let mut start = 0;
     for (index, &unit) in code.iter().enumerate() {
