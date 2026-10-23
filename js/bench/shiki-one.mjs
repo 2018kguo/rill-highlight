@@ -1,5 +1,6 @@
-// Times @streamdown/code's Shiki setup on one language (fresh process): cold =
-// createHighlighter + first codeToTokens; warm = codeToTokens of the same code.
+// Times Shiki as @streamdown/code sets it up (JavaScript regex engine, two
+// themes) on one language in a fresh process: cold = createHighlighter + first
+// codeToTokens; warm = codeToTokens of the same code; html = codeToHtml.
 import { readFileSync } from 'node:fs';
 import { createHighlighter } from 'shiki';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
@@ -14,4 +15,6 @@ const coldMs = performance.now() - t0;
 for (let i = 0; i < 3; i++) { highlighter.codeToTokens(code, options); }
 let warmMs = Infinity;
 for (let i = 0; i < 9; i++) { const t = performance.now(); highlighter.codeToTokens(code, options); warmMs = Math.min(warmMs, performance.now() - t); }
-console.log(JSON.stringify({ lang, coldMs, warmMs }));
+let htmlMs = Infinity;
+for (let i = 0; i < 9; i++) { const t = performance.now(); highlighter.codeToHtml(code, options); htmlMs = Math.min(htmlMs, performance.now() - t); }
+console.log(JSON.stringify({ lang, coldMs, warmMs, htmlMs }));

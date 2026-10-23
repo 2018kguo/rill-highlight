@@ -1,21 +1,25 @@
-// A drop-in for @streamdown/code 2.0.0's `createCodePlugin`, highlighting with
-// rill-highlight instead of Shiki. The caching and incremental tokenization are
-// @streamdown/code's (Apache-2.0, Vercel), with Shiki's `createHighlighter` /
-// `codeToTokens` replaced by the rill-highlight core; results are identical.
+// A drop-in for @streamdown/code 2.0.0 (`createCodePlugin` and `code`),
+// highlighting with rill-highlight instead of Shiki. The caching and incremental
+// tokenization are @streamdown/code's (Apache-2.0, Vercel), on rill-highlight's
+// `createHighlighter`; the results are identical.
 //
-//   const core = await createHighlightCore({ wasm, data });
-//   const code = createCodePlugin({ core });
+//   import { code } from '@2018kguo/rill-highlight/streamdown';
+//   <Streamdown plugins={{ code }}>...</Streamdown>
 //
-// Additions: `highlightSync(options)` returns the result when the language's
+// Options: `themes` as in @streamdown/code, and `core` (from
+// createHighlightCore) to load the wasm and data from somewhere else.
+// Addition: `highlightSync(options)` returns the result when the language's
 // highlighter is already loaded (null otherwise) without a callback round trip.
+import { getDefaultCore } from '#default-core';
+import manifest from '../dist/manifest.js';
+
+const languageAliases = {};
+for (const [id, entry] of Object.entries(manifest.languages)) for (const alias of entry.aliases) languageAliases[alias] = id;
+const languageNames = new Set(Object.keys(manifest.languages));
 
 export function createCodePlugin({ core, themes } = {}) {
   const defaultThemes = themes ?? ['github-light', 'github-dark'];
-  const languages = core.languages;
-  const languageAliases = {};
-  for (const [id, entry] of Object.entries(languages)) for (const alias of entry.aliases ?? []) languageAliases[alias] = id;
-  const languageNames = new Set(Object.keys(languages));
-
+  const createHighlighter = async (options) => (await (core ?? getDefaultCore())).createHighlighter(options);
   const normalizeLanguage = (language) => {
     const lower = language.trim().toLowerCase();
     return languageAliases[lower] ?? lower;
@@ -81,14 +85,14 @@ export function createCodePlugin({ core, themes } = {}) {
     for (const row of rows) for (const token of row) token.offset += by;
   };
 
-  const tokenize = (highlighter, code, stateKey) => {
+  const tokenize = (highlighter, code, stateKey, language, themes) => {
     const state = takeIncrementalState(stateKey, code);
     let prefix = state ? state.prefix : '';
     let rows = state ? state.rows : [];
     let grammarState = state?.grammarState;
     const lineEnd = code.lastIndexOf('\n') + 1;
     if (lineEnd > prefix.length) {
-      const completed = highlighter.codeToTokens(code.slice(prefix.length, lineEnd), { grammarState });
+      const completed = highlighter.codeToTokens(code.slice(prefix.length, lineEnd), { lang: language, themes, grammarState });
       const newRows = completed.tokens;
       newRows.pop();
       shiftOffsets(newRows, prefix.length);
@@ -99,7 +103,7 @@ export function createCodePlugin({ core, themes } = {}) {
     } else if (state) {
       storeIncrementalState(stateKey, state);
     }
-    const tail = highlighter.codeToTokens(code.slice(lineEnd), { grammarState });
+    const tail = highlighter.codeToTokens(code.slice(lineEnd), { lang: language, themes, grammarState });
     shiftOffsets(tail.tokens, lineEnd);
     return { ...tail, tokens: rows.concat(tail.tokens) };
   };
@@ -111,7 +115,7 @@ export function createCodePlugin({ core, themes } = {}) {
   const getHighlighter = (language, themes) => {
     const cacheKey = getHighlighterCacheKey(language, themes);
     if (highlighterCache.has(cacheKey)) return highlighterCache.get(cacheKey);
-    const promise = core.getHighlighter(language, themes.map(getThemeName)).then((highlighter) => {
+    const promise = createHighlighter({ themes, langs: [language] }).then((highlighter) => {
       loadedHighlighters.set(cacheKey, highlighter);
       return highlighter;
     });
@@ -123,13 +127,14 @@ export function createCodePlugin({ core, themes } = {}) {
     const resolvedLanguage = normalizeLanguage(language);
     const themeNames = [getThemeName(themes[0]), getThemeName(themes[1])];
     const safeLanguage = languageNames.has(resolvedLanguage) ? resolvedLanguage : 'text';
-    return { safeLanguage, themeNames };
+    return { resolvedLanguage, safeLanguage, themeNames };
   };
 
-  const run = (highlighter, code, safeLanguage, themes, tokensCacheKey, isIncomplete) => {
+  const run = (highlighter, code, resolvedLanguage, safeLanguage, themes, themeNames, tokensCacheKey, isIncomplete) => {
     let result = getCachedTokens(tokensCacheKey);
     if (!result) {
-      result = tokenize(highlighter, code, `${getHighlighterCacheKey(safeLanguage, themes)}:${highlighter.language === 'text' ? 'text' : safeLanguage}`);
+      const language = highlighter.getLoadedLanguages().includes(resolvedLanguage) ? resolvedLanguage : 'text';
+      result = tokenize(highlighter, code, `${getHighlighterCacheKey(safeLanguage, themes)}:${language}`, language, { light: themeNames[0], dark: themeNames[1] });
       if (!isIncomplete) setCachedTokens(tokensCacheKey, result);
     }
     return result;
@@ -142,22 +147,24 @@ export function createCodePlugin({ core, themes } = {}) {
     getSupportedLanguages: () => Array.from(languageNames),
     getThemes: () => defaultThemes,
     highlight({ code, language, themes, isIncomplete = false }, callback) {
-      const { safeLanguage, themeNames } = resolve(language, themes);
+      const { resolvedLanguage, safeLanguage, themeNames } = resolve(language, themes);
       const tokensCacheKey = getTokensCacheKey(code, safeLanguage, themeNames);
       const cached = getCachedTokens(tokensCacheKey);
       if (cached) return cached;
       getHighlighter(safeLanguage, themes)
-        .then((highlighter) => callback?.(run(highlighter, code, safeLanguage, themes, tokensCacheKey, isIncomplete)))
+        .then((highlighter) => callback?.(run(highlighter, code, resolvedLanguage, safeLanguage, themes, themeNames, tokensCacheKey, isIncomplete)))
         .catch((error) => console.error('[Streamdown Code] Failed to highlight code:', error));
       return null;
     },
     highlightSync({ code, language, themes, isIncomplete = false }) {
-      const { safeLanguage, themeNames } = resolve(language, themes);
+      const { resolvedLanguage, safeLanguage, themeNames } = resolve(language, themes);
       const tokensCacheKey = getTokensCacheKey(code, safeLanguage, themeNames);
       const cached = getCachedTokens(tokensCacheKey);
       if (cached) return cached;
       const highlighter = loadedHighlighters.get(getHighlighterCacheKey(safeLanguage, themes));
-      return highlighter ? run(highlighter, code, safeLanguage, themes, tokensCacheKey, isIncomplete) : null;
+      return highlighter ? run(highlighter, code, resolvedLanguage, safeLanguage, themes, themeNames, tokensCacheKey, isIncomplete) : null;
     },
   };
 }
+
+export const code = createCodePlugin();

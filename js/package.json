@@ -1,18 +1,79 @@
 {
-  "name": "rill-highlight-harness",
-  "private": true,
+  "name": "@2018kguo/rill-highlight",
+  "version": "0.1.0",
+  "description": "Shiki's syntax highlighting with identical tokens and HTML, tokenized by a Rust/wasm port of its TextMate engine.",
+  "license": "MIT",
+  "author": "Kevin Guo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/2018kguo/rill-highlight.git",
+    "directory": "js"
+  },
+  "homepage": "https://github.com/2018kguo/rill-highlight#readme",
+  "bugs": "https://github.com/2018kguo/rill-highlight/issues",
+  "keywords": [
+    "shiki",
+    "syntax-highlighting",
+    "highlighter",
+    "textmate",
+    "wasm",
+    "streamdown"
+  ],
   "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./core": {
+      "types": "./types/core.d.ts",
+      "default": "./src/core.js"
+    },
+    "./streamdown": {
+      "types": "./types/streamdown.d.ts",
+      "default": "./src/streamdown.js"
+    },
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json"
+  },
+  "imports": {
+    "#default-core": {
+      "node": "./src/default-core-node.js",
+      "default": "./src/default-core-browser.js"
+    }
+  },
+  "types": "./types/index.d.ts",
+  "files": [
+    "src/",
+    "types/",
+    "dist/rill_highlight.wasm",
+    "dist/manifest.js",
+    "dist/languages.json",
+    "dist/grammars/",
+    "dist/themes/",
+    "THIRD_PARTY_NOTICES.md",
+    "notices/"
+  ],
   "scripts": {
     "corpus": "node corpus/fetch.mjs",
-    "build": "node scripts/build-grammars.mjs && sh scripts/build-wasm.sh && cargo build --release -p rill-highlight --examples",
-    "test": "node test/compare.mjs && node test/streaming.mjs",
+    "build": "node scripts/build-grammars.mjs && sh scripts/build-wasm.sh && node scripts/package-files.mjs",
+    "test": "node test/api.mjs && node test/compare.mjs && node test/html.mjs && node test/streaming.mjs",
+    "test:ci": "node test/api.mjs && node test/compare.mjs --ci && node test/html.mjs --ci && MAX_LINES=60 node test/streaming.mjs --ci typescript python markdown && node scripts/package-files.mjs && node test/pack.mjs",
     "test:all-languages": "node test/all-languages.mjs",
-    "bench": "node bench/native.mjs && node bench/wasm.mjs",
+    "test:pack": "node scripts/package-files.mjs && node test/pack.mjs",
+    "bench": "cargo build --release --example bench && node bench/native.mjs && node bench/wasm.mjs",
     "bench:browser": "node browser/build.mjs && node browser/run.mjs"
   },
   "devDependencies": {
     "@streamdown/code": "2.0.0",
+    "binaryen": "132.0.0",
+    "playwright-core": "1.64.1",
     "shiki": "4.5.0",
-    "playwright-core": "1.64.1"
+    "tm-grammars": "^1.32.22",
+    "tm-themes": "^1.12.12"
   }
 }
