@@ -19,8 +19,12 @@ fn every_bundled_pattern_compiles() {
         let file: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("grammar file")).expect("grammar JSON");
         for (source, translation) in file["regexes"].as_object().expect("regexes") {
             // `0`: the source itself; a string: the pattern; both with flags `dgv`.
-            let short = [Value::String(if translation.is_number() { source.clone() } else { translation.as_str().unwrap_or_default().to_string() }), Value::from("dgv"), Value::Null];
-            let Some([pattern, flags, options]) = (if translation.is_array() { translation.as_array().map(Vec::as_slice) } else if translation.is_null() { None } else { Some(&short[..]) }) else { continue };
+            let (pattern, flags, options) = match translation {
+                Value::Null => continue,
+                Value::Number(_) => (source.as_str(), "dgv", &Value::Null),
+                Value::String(pattern) => (pattern.as_str(), "dgv", &Value::Null),
+                _ => (translation[0].as_str().expect("pattern"), translation[1].as_str().expect("flags"), &translation[2]),
+            };
             let numbers = |value: &Value| value.as_array().map(|items| items.iter().filter_map(Value::as_u64).map(|n| n as u32).collect()).unwrap_or_default();
             let emulation = EmulationOptions {
                 hidden_captures: numbers(&options["hiddenCaptures"]),
@@ -30,8 +34,6 @@ fn every_bundled_pattern_compiles() {
                     .unwrap_or_default(),
                 clip_search: options["strategy"].as_str() == Some("clip_search"),
             };
-            let pattern = pattern.as_str().expect("pattern");
-            let flags = flags.as_str().expect("flags");
             // Back-reference templates compile once their captures are known.
             let result = if source.chars().any(|c| ('\u{E000}'..='\u{E8FF}').contains(&c)) {
                 JsRegExp::with_placeholders(pattern, flags, &emulation, &[])
