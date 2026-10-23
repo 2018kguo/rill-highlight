@@ -1,4 +1,4 @@
-// Static server for the browser bench (serves highlight/).
+// Static server for the browser bench (serves js/).
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';

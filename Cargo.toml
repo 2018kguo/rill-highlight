@@ -2,11 +2,15 @@
 name = "rill-highlight"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
-description = "Shiki's syntax highlighting (TextMate grammars on its JavaScript regex engine) in Rust, token for token."
-repository = "https://github.com/2018kguo/rill"
+authors = ["Kevin Guo"]
+description = "Shiki's syntax highlighting in Rust and WebAssembly: TextMate grammars on a JavaScript-compatible regex engine, with identical tokens."
+repository = "https://github.com/2018kguo/rill-highlight"
+readme = "README.md"
 keywords = ["syntax-highlighting", "textmate", "shiki", "regex", "wasm"]
-categories = ["text-processing", "wasm"]
+categories = ["text-processing", "wasm", "parser-implementations"]
+include = ["/src", "/tests", "/examples", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -15,5 +19,5 @@ crate-type = ["cdylib", "rlib"]
 serde_json = { version = "1.0", features = ["preserve_order"] }
 
 [features]
-# The C-ABI exports the JavaScript package loads (`rill_highlight_*`).
+# The C-ABI exports the JavaScript package loads (`rhl_*`, see src/wasm.rs).
 wasm-exports = []

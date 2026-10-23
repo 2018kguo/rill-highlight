@@ -1,0 +1,11 @@
+target/
+*.tgz
+js/node_modules/
+js/dist/
+js/scratch/
+js/corpus/files/
+# Written into the npm package by js/scripts/package-files.mjs.
+js/README.md
+js/LICENSE
+js/THIRD_PARTY_NOTICES.md
+js/notices/
