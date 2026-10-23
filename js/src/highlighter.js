@@ -150,11 +150,11 @@ const releaseState = typeof FinalizationRegistry === 'undefined' ? null : new Fi
 /** Shiki's `GrammarState`: the tokenizer state after some code. */
 export class GrammarState {
   #binding;
-  constructor(binding, highlighterKey, handle, lang, themes) {
+  constructor(binding, highlighter, handle, lang, themes) {
     this.#binding = binding;
     this.lang = lang;
     this.themes = themes;
-    Object.defineProperty(this, '_highlighterKey', { value: highlighterKey });
+    Object.defineProperty(this, '_highlighter', { value: highlighter });
     Object.defineProperty(this, '_handle', { value: handle });
     if (handle && releaseState) releaseState.register(this, { binding, handle });
   }
@@ -183,6 +183,7 @@ export async function createHighlighterWithCore(core, options = {}) {
   const graph = new Map(); // Shiki registry `_langGraph`: name -> registered
   const known = new Set(); // Shiki registry `_langMap` keys
   const highlighters = new Map(); // `${grammar}\0${theme handles}` -> entry
+  let highlighterCount = 0;
 
   const ensureNotDisposed = () => {
     if (disposed) throw new ShikiError('Shiki instance has been disposed');
@@ -311,7 +312,7 @@ export async function createHighlighterWithCore(core, options = {}) {
     let entry = highlighters.get(key);
     if (!entry) {
       const handle = binding.newHighlighter(registry, grammar, records.map((record) => record.handle));
-      entry = { key, grammar, handle, records, styles: [], views: new Map() };
+      entry = { key, id: ++highlighterCount, grammar, handle, records, styles: [], views: new Map() };
       highlighters.set(key, entry);
     }
     return entry;
@@ -324,7 +325,9 @@ export async function createHighlighterWithCore(core, options = {}) {
     if (options.grammarState) {
       const grammarState = options.grammarState;
       if (!(grammarState instanceof GrammarState)) throw new ShikiError('Invalid grammar state');
-      if (grammarState._highlighterKey !== entry.key) throw unsupported('grammarState from a call with other themes', 'pass the same `theme` or `themes`');
+      // A state belongs to the wasm highlighter that made it: same grammar, same
+      // themes, and not recreated since (a lazily embedded language loading).
+      if (grammarState._highlighter !== entry.id) throw unsupported('grammarState from a call with other themes, or from before its language was reloaded', 'pass a state from the same `theme` or `themes`');
       state = grammarState._handle;
     } else if (options.grammarContextCode != null) {
       state = binding.tokenize(entry.handle, options.grammarContextCode, 0, maxLineLength)[0];
@@ -409,7 +412,7 @@ export async function createHighlighterWithCore(core, options = {}) {
     return { entry, numbers, state, lang: grammar };
   }
 
-  const makeGrammarState = (result) => new GrammarState(binding, result.entry.key, result.state, result.lang, result.entry.records.map((record) => record.name));
+  const makeGrammarState = (result) => new GrammarState(binding, result.entry.id, result.state, result.lang, result.entry.records.map((record) => record.name));
 
   /** Per-theme `{ color, fontStyle }` of each style id, color replacements applied. */
   const variantsMaker = (entry, options) => {
