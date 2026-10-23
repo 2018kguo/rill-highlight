@@ -153,8 +153,9 @@ pub extern "C" fn rhl_highlighter_free(highlighter: u32) {
 
 /// Tokenizes UTF-16 `code` after grammar state `state` (0: initial), skipping
 /// lines of `max_line_length` units or more when it is not 0. Returns a pointer
-/// to u32s: [state handle (0: initial), line count, then per line the token count
-/// and (offset, length, style) per token], or null on error.
+/// to u32s: [state handle (0: initial), the number of u32s that follow, the
+/// highlighter's style count, line count, then per line the token count and
+/// (offset, length, style) per token], or null on error.
 ///
 /// # Safety
 /// `code..code + length` must be readable UTF-16.
@@ -167,7 +168,9 @@ pub unsafe extern "C" fn rhl_tokenize(highlighter: u32, code: *const u16, length
             exports.fail("unknown highlighter");
             return std::ptr::null();
         };
-        match target.tokenize(code, previous.as_ref(), max_line_length) {
+        let tokenized = target.tokenize(code, previous.as_ref(), max_line_length);
+        let style_count = target.styles().len() as u32;
+        match tokenized {
             Ok(tokenized) => {
                 let state_handle = match tokenized.state {
                     Some(state) => {
@@ -179,14 +182,14 @@ pub unsafe extern "C" fn rhl_tokenize(highlighter: u32, code: *const u16, length
                 };
                 let result = &mut exports.result;
                 result.clear();
-                result.push(state_handle);
-                result.push(tokenized.lines.len() as u32);
+                result.extend_from_slice(&[state_handle, 0, style_count, tokenized.lines.len() as u32]);
                 for line in &tokenized.lines {
                     result.push(line.len() as u32);
                     for token in line {
                         result.extend_from_slice(&[token.offset, token.length, token.style]);
                     }
                 }
+                result[1] = (result.len() - 2) as u32;
                 result.as_ptr()
             }
             Err(error) => {

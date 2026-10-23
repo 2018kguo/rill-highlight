@@ -33,6 +33,10 @@ struct LiteralScan {
 /// Literal scans kept before the cache starts over.
 const MAX_LITERAL_SCANS: usize = 4096;
 
+/// Inputs shorter than this (from the search start) are scanned every time:
+/// that is cheaper than looking the scan up.
+const MIN_REMEMBERED_SCAN: usize = 256;
+
 /// Reusable matcher state.
 #[derive(Default)]
 pub struct Matcher {
@@ -56,7 +60,9 @@ impl Matcher {
 
     /// Whether `literal` occurs in `input` at or after `pos`.
     fn has_literal(&mut self, literal: &[(u16, u16)], input: &[u16], pos: usize) -> bool {
-        let Some(id) = self.input_id else { return find_literal(&input[pos..], literal).is_some() };
+        let Some(id) = self.input_id.filter(|_| input.len() - pos >= MIN_REMEMBERED_SCAN) else {
+            return find_literal(&input[pos..], literal).is_some();
+        };
         let key = (literal.as_ptr() as usize, id, input.len());
         if let Some(scan) = self.literal_scans.get(&key) {
             match scan.next {

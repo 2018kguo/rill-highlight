@@ -1,6 +1,7 @@
 //! Shiki's `codeToTokensBase` / `codeToTokensWithThemes` for one to `MAX_THEMES`
 //! themes in one pass: the grammar matches once and every theme styles the result.
 
+use crate::fxhash::FxHashMap;
 use crate::regex::EmulationOptions;
 use crate::textmate::grammar::{self, Grammar, Translation};
 use crate::textmate::raw::RawGrammar;
@@ -175,20 +176,29 @@ pub struct Tokenized {
     pub state: Option<State>,
 }
 
+/// One theme's look of a token, packed: color id (9 bits in the metadata, 10
+/// here) above the font style (4 bits).
+type PackedStyle = u64;
+const PACKED_STYLE_BITS: u32 = 14;
+
 /// The color id standing for Shiki's `color: ""` on lines over the maximum length.
-const EMPTY_COLOR: u32 = u32::MAX;
+const EMPTY_COLOR: u32 = 0x3FF;
 
-/// A style key: (color id, font style) per theme.
-type StyleKey = [(u32, u32); MAX_THEMES];
+const fn pack_style(color_id: u32, font_style: u32) -> PackedStyle {
+    ((color_id as u64) << 4) | font_style as u64
+}
 
-/// One theme's tokens of a line: (start, end, (color id, font style)).
-type ThemeTokens = Vec<(usize, usize, (u32, u32))>;
+/// A style key: the packed style of each theme, theme `i` at bits `14 * i`.
+type StyleKey = u64;
+
+/// One theme's tokens of a line: (start, end, packed style).
+type ThemeTokens = Vec<(usize, usize, PackedStyle)>;
 
 /// Highlights one language with one or more themes.
 pub struct Highlighter {
     grammar: Grammar,
     themes: Vec<Rc<Theme>>,
-    style_ids: HashMap<StyleKey, u32>,
+    style_ids: FxHashMap<StyleKey, u32>,
     styles: Vec<Vec<ThemeStyle>>,
 }
 
@@ -205,7 +215,7 @@ impl Highlighter {
         }
         let scope_name = registry.scope_name(language).ok_or_else(|| Error::new(format!("no grammar {language}")))?;
         let grammar = Grammar::new(registry.inner.clone(), &scope_name)?;
-        Ok(Self { grammar, themes, style_ids: HashMap::new(), styles: Vec::new() })
+        Ok(Self { grammar, themes, style_ids: FxHashMap::default(), styles: Vec::new() })
     }
 
     /// A highlighter from grammar file texts (the language's grammars in Shiki's
@@ -259,7 +269,8 @@ impl Highlighter {
                 continue;
             }
             if max_line_length > 0 && line.len() >= max_line_length {
-                let style = self.style_id(&[(EMPTY_COLOR, 0); MAX_THEMES]);
+                let empty = (0..self.themes.len()).fold(0, |key, theme| key | pack_style(EMPTY_COLOR, 0) << (PACKED_STYLE_BITS * theme as u32));
+                let style = self.style_id(empty);
                 lines.push(vec![Token { offset: start as u32, length: line.len() as u32, style }]);
                 continue;
             }
@@ -274,7 +285,7 @@ impl Highlighter {
                     let token_start = token_start as usize;
                     let token_end = binary.get(index + 1).map_or(line.len(), |&(next, _)| next as usize);
                     if token_start != token_end {
-                        tokens.push((token_start, token_end, (tokenizer::foreground(metadata), tokenizer::font_style(metadata))));
+                        tokens.push((token_start, token_end, pack_style(tokenizer::foreground(metadata), tokenizer::font_style(metadata))));
                     }
                 }
             }
@@ -291,14 +302,14 @@ impl Highlighter {
         let mut indexes = [0usize; MAX_THEMES];
         let mut position = per_theme[0].first().map_or(0, |token| token.0);
         loop {
-            let mut key: StyleKey = [(0, 0); MAX_THEMES];
+            let mut key: StyleKey = 0;
             let mut end = usize::MAX;
             for (theme, tokens) in per_theme.iter().enumerate() {
                 let Some(token) = tokens.get(indexes[theme]) else { return out };
-                key[theme] = token.2;
+                key |= token.2 << (PACKED_STYLE_BITS * theme as u32);
                 end = end.min(token.1);
             }
-            let style = self.style_id(&key);
+            let style = self.style_id(key);
             out.push(Token { offset: line_offset + position as u32, length: (end - position) as u32, style });
             position = end;
             for (theme, tokens) in per_theme.iter().enumerate() {
@@ -309,22 +320,21 @@ impl Highlighter {
         }
     }
 
-    fn style_id(&mut self, key: &StyleKey) -> u32 {
-        if let Some(&id) = self.style_ids.get(key) {
+    fn style_id(&mut self, key: StyleKey) -> u32 {
+        if let Some(&id) = self.style_ids.get(&key) {
             return id;
         }
         let id = self.styles.len() as u32;
-        let style = self
-            .themes
-            .iter()
-            .zip(key)
-            .map(|(theme, &(color_id, font_style))| ThemeStyle {
-                color: if color_id == EMPTY_COLOR { Some(Rc::from("")) } else { theme.color(color_id).map(Rc::from) },
-                font_style,
+        let style = (0..)
+            .zip(&self.themes)
+            .map(|(index, theme)| {
+                let packed = (key >> (PACKED_STYLE_BITS * index)) & ((1 << PACKED_STYLE_BITS) - 1);
+                let (color_id, font_style) = ((packed >> 4) as u32, (packed & 0xF) as u32);
+                ThemeStyle { color: if color_id == EMPTY_COLOR { Some(Rc::from("")) } else { theme.color(color_id).map(Rc::from) }, font_style }
             })
             .collect();
         self.styles.push(style);
-        self.style_ids.insert(*key, id);
+        self.style_ids.insert(key, id);
         id
     }
 }
