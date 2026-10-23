@@ -4,11 +4,19 @@
 //   dist/languages.json        language ids, aliases, and the grammars each one loads
 //   dist/grammars/<name>.json  { grammar, regexes } per grammar
 //   dist/themes/<name>.json    each bundled theme as Shiki ships it
+//   dist/data/                 the same grammars and themes as JavaScript modules
+//                              (`export default "<json>"`) and index.js, a table
+//                              that imports each on demand: what the package
+//                              ships, so any bundler splits them into chunks
 //
+// A grammar keeps only the keys the tokenizer reads (vscode-textmate's rule
+// fields), so comments and editor metadata are left out.
 // `regexes` maps every Oniguruma source the tokenizer can hand to the regex engine
 // (after vscode-textmate's `\z` rewrite and `\A`/`\G` anchor variants) to its
 // oniguruma-to-es translation `[pattern, flags, options]`, or to null when the
-// JavaScript engine skips it (`forgiving`). End/while sources with back-references
+// JavaScript engine skips it (`forgiving`). The common translations are written
+// short: the pattern alone when the flags are `dgv` and there are no options, and
+// `0` when that pattern is the source itself. End/while sources with back-references
 // are stored as templates: each `\N` becomes the placeholder U+E000+N, which the
 // Rust engine replaces with the captured text.
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -19,8 +27,7 @@ import { createRequire } from 'node:module';
 const shikiVersion = createRequire(import.meta.url)('shiki/package.json').version;
 
 const out = new URL('../dist/', import.meta.url).pathname;
-mkdirSync(out + 'grammars', { recursive: true });
-mkdirSync(out + 'themes', { recursive: true });
+for (const directory of ['grammars', 'themes', 'data/grammars', 'data/themes']) mkdirSync(out + directory, { recursive: true });
 
 // Shiki's defaultJavaScriptRegexConstructor options, with the target that
 // `target: 'auto'` picks in engines with ES2025 flag groups.
@@ -136,21 +143,64 @@ for (const id of Object.keys(bundledLanguages)) {
   languages[id] = { name: loaded.at(-1).name, aliases: info?.aliases ?? [], grammars: loaded.map((g) => g.name) };
 }
 
+// The keys vscode-textmate reads: of a grammar, of a rule, and the rule maps.
+const GRAMMAR_KEYS = new Set(['name', 'scopeName', 'injectionSelector', 'injectTo', 'injections']);
+const RULE_KEYS = new Set(['name', 'contentName', 'match', 'begin', 'end', 'while', 'include', 'applyEndPatternLast', 'patterns']);
+const RULE_MAPS = new Set(['repository', 'captures', 'beginCaptures', 'endCaptures', 'whileCaptures']);
+const ruleOf = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const rule = {};
+  for (const [key, field] of Object.entries(value)) {
+    if (key === 'patterns') rule.patterns = Array.isArray(field) ? field.map(ruleOf) : field;
+    else if (RULE_MAPS.has(key)) rule[key] = mapOf(field);
+    else if (RULE_KEYS.has(key)) rule[key] = field;
+  }
+  return rule;
+};
+const mapOf = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).map(([key, rule]) => [key, ruleOf(rule)])) : value);
+const grammarOf = (grammar) => {
+  const out = ruleOf(grammar);
+  for (const key of GRAMMAR_KEYS) if (key in grammar) out[key] = key === 'injections' ? mapOf(grammar[key]) : grammar[key];
+  return out;
+};
+const compact = (source, translation) =>
+  translation && translation[1] === 'dgv' && translation[2] === null ? (translation[0] === source ? 0 : translation[0]) : translation;
+const writeModule = (path, text) => writeFileSync(path, `export default ${JSON.stringify(text)};\n`);
+
 let regexCount = 0, skipped = 0, bytes = 0;
-for (const [name, grammar] of grammars) {
+for (const [name, raw] of grammars) {
+  const grammar = grammarOf(raw);
   const json = JSON.stringify(grammar);
-  if (hasLoneSurrogate(json) || /[-]/.test(json)) throw new Error(`${name}: unsupported characters in grammar`);
+  if (hasLoneSurrogate(json) || /[\ue000-\ue8ff]/.test(json)) throw new Error(`${name}: unsupported characters in grammar`);
   const regexes = collectRegexes(grammar);
   regexCount += Object.keys(regexes).length;
   skipped += Object.values(regexes).filter((r) => r === null).length;
+  for (const source of Object.keys(regexes)) regexes[source] = compact(source, regexes[source]);
   const text = JSON.stringify({ grammar, regexes });
   bytes += text.length;
   writeFileSync(`${out}grammars/${name}.json`, text);
+  writeModule(`${out}data/grammars/${name}.js`, text);
 }
 writeFileSync(out + 'languages.json', JSON.stringify(languages));
 for (const name of Object.keys(bundledThemes)) {
-  writeFileSync(`${out}themes/${name}.json`, JSON.stringify((await bundledThemes[name]()).default));
+  const text = JSON.stringify((await bundledThemes[name]()).default);
+  writeFileSync(`${out}themes/${name}.json`, text);
+  writeModule(`${out}data/themes/${name}.js`, text);
 }
+const table = (directory, names) => `{\n${names.map((name) => `  ${JSON.stringify(name)}: () => import(${JSON.stringify(`./${directory}/${name}.js`)}),`).join('\n')}\n}`;
+writeFileSync(
+  out + 'data/index.js',
+  `// Generated by scripts/build-grammars.mjs from shiki ${shikiVersion}.
+// Each bundled grammar and theme as a module of its own, imported on demand: a
+// bundler makes each a chunk that loads when a highlighter first needs it.
+const grammars = ${table('grammars', [...grammars.keys()])};
+const themes = ${table('themes', Object.keys(bundledThemes))};
+const text = (table, name) => (Object.hasOwn(table, name) ? table[name]().then((module) => module.default) : Promise.reject(new Error(\`[rill-highlight] no bundled data for \${name}\`)));
+
+/** createHighlightCore's \`data\`: the JSON text of each bundled grammar and theme. */
+export const data = { grammar: (name) => text(grammars, name), theme: (name) => text(themes, name) };
+`,
+);
 const manifest = { languages, grammars: grammarInfo, themes: Object.keys(bundledThemes) };
 writeFileSync(out + 'manifest.js', `// Generated by scripts/build-grammars.mjs from shiki ${shikiVersion}.\nexport default ${JSON.stringify(manifest)};\n`);
 console.log(`${grammars.size} grammars, ${Object.keys(languages).length} language ids, ${regexCount} regex sources (${skipped} skipped), ${(bytes / 1e6).toFixed(1)} MB`);

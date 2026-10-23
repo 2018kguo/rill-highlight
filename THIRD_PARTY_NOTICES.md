@@ -113,7 +113,7 @@ limitations under the License.
 
 ## Grammars
 
-The 260 grammars in dist/grammars/ are Shiki 4.5.0's bundled
+The 260 grammars in dist/data/grammars/ are Shiki 4.5.0's bundled
 grammars, from tm-grammars 1.32.22, converted (their patterns translated
 to JavaScript syntax). Each keeps its own license, listed here from
 tm-grammars' metadata; the license texts are in notices/tm-grammars-NOTICE (in
@@ -386,7 +386,7 @@ leave those grammars out of what you serve.
 
 ## Themes
 
-The 65 themes in dist/themes/ are Shiki 4.5.0's bundled themes, from
+The 65 themes in dist/data/themes/ are Shiki 4.5.0's bundled themes, from
 tm-themes 1.12.12, unchanged. The license texts are in
 notices/tm-themes-NOTICE.
 

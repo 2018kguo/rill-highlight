@@ -8,8 +8,11 @@
 //
 // Options: `themes` as in @streamdown/code, and `core` (from
 // createHighlightCore) to load the wasm and data from somewhere else.
-// Addition: `highlightSync(options)` returns the result when the language's
-// highlighter is already loaded (null otherwise) without a callback round trip.
+// Additions: `highlightSync(options)` returns the result when the language's
+// highlighter is already loaded (null otherwise) without a callback round trip,
+// and `load({ language, themes })` loads it, rejecting when it cannot (a theme
+// that is not bundled, a grammar that does not compile), where `highlight` only
+// logs the error and never calls back.
 import { getDefaultCore } from '#default-core';
 import manifest from '../dist/manifest.js';
 
@@ -158,6 +161,14 @@ export function createCodePlugin({ core, themes } = {}) {
         .then((highlighter) => callback?.(run(highlighter, code, resolvedLanguage, safeLanguage, themes, themeNames, tokensCacheKey, isIncomplete)))
         .catch((error) => console.error('[Streamdown Code] Failed to highlight code:', error));
       return null;
+    },
+    load({ language, themes }) {
+      const { resolvedLanguage, safeLanguage, themeNames } = resolve(language, themes);
+      return getHighlighter(safeLanguage, themes).then((highlighter) => {
+        // Creates the wasm highlighter for these themes, compiling the grammar's rules.
+        const lang = highlighter.getLoadedLanguages().includes(resolvedLanguage) ? resolvedLanguage : 'text';
+        highlighter.codeToTokens('', { lang, themes: { light: themeNames[0], dark: themeNames[1] } });
+      });
     },
     highlightSync({ code, language, themes, isIncomplete = false }) {
       const { resolvedLanguage, safeLanguage, themeNames } = resolve(language, themes);

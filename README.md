@@ -33,8 +33,8 @@ same growing code block many times a second.
   streamed and freshly loaded answers (numbers under
   [Performance](#performance)). Tokenizing two themes takes one pass, where
   Shiki tokenizes once per theme.
-- **Small.** The wasm module is 387 KB (157 KB gzipped). Grammars and themes
-  are separate JSON files loaded when a language or theme is first used, as
+- **Small.** The wasm module is 335 KB (135 KB gzipped). Grammars and themes
+  are separate modules loaded when a language or theme is first used, as
   Shiki loads its own.
 
 The caveats: no transformers, decorations or explanations, no custom
@@ -49,7 +49,7 @@ npm install @2018kguo/rill-highlight
 ```
 
 It has no dependencies. Node 20 or later, or any browser with WebAssembly.
-The package is 2.7 MB (18.6 MB unpacked, nearly all of it grammars); a page
+The package is 2.7 MB (19.8 MB unpacked, nearly all of it grammars); a page
 fetches only the wasm module and the grammars and themes it uses.
 
 ## Use
@@ -92,12 +92,30 @@ package directory.
 
 ### Browsers
 
-With a bundler, the default import fetches the wasm module and JSON files
-relative to the module, with `new URL('../dist/...', import.meta.url)`, which
-bundlers that turn such URLs into assets (Vite does) resolve. Otherwise, or
-without a bundler, serve the package's `dist/` directory (or use a CDN copy)
-and point a core at it; `/core` has no bare imports, so it also loads straight
-from a CDN:
+With a bundler, the default import works as it is. Each grammar and theme is
+a JavaScript module the package imports with a dynamic `import()` when it is
+first used, so every bundler puts it in a chunk of its own; the wasm module is
+fetched from `new URL('../dist/rill_highlight.wasm', import.meta.url)`, which
+Vite, webpack and Rollup with an asset plugin turn into an asset. Bundlers
+that leave such URLs alone (bun) need the wasm module served and passed in,
+with the package's data:
+
+```js
+import { createHighlightCore } from '@2018kguo/rill-highlight/core';
+import { data } from '@2018kguo/rill-highlight/data';
+import { createCodePlugin } from '@2018kguo/rill-highlight/streamdown';
+
+// rill_highlight.wasm copied from node_modules/@2018kguo/rill-highlight/dist/
+const core = createHighlightCore({ wasm: new URL('./rill_highlight.wasm', import.meta.url), data });
+const highlighter = await (await core).createHighlighter({ themes: ['github-dark'], langs: ['ts'] });
+const code = createCodePlugin({ core });
+```
+
+`test/bundle.mjs` builds a page that highlights on the main thread and in a
+Web Worker with Vite and with bun, from the packed tarball, and checks it in
+Chromium. Without a bundler, serve the package's `dist/` directory (or use a
+CDN copy) and point a core at it; `/core` has no bare imports, so it also loads
+straight from a CDN:
 
 ```js
 import { createHighlightCore } from '@2018kguo/rill-highlight/core';
@@ -111,7 +129,8 @@ const highlighter = await core.createHighlighter({ themes: ['github-dark'], lang
 `createHighlightCore({ wasm, data })` takes the wasm module (bytes, a
 `Response`, a `WebAssembly.Module` or a URL) and a `data` object with
 `grammar(name)` and `theme(name)` functions returning JSON text, for any
-other way of loading them.
+other way of loading them; `@2018kguo/rill-highlight/data` exports the
+package's own.
 
 ### Streamdown
 
@@ -129,12 +148,14 @@ import { code } from '@2018kguo/rill-highlight/streamdown';
 `@streamdown/code`, and a core from `createHighlightCore` to load the files
 from elsewhere. The plugin also has `highlightSync(options)`, which returns
 the result right away when the language is loaded (null otherwise), without
-the callback round trip.
+the callback round trip, and `load({ language, themes })`, which loads it and
+rejects when it cannot (a theme that is not bundled, a grammar that does not
+compile) where `highlight` only logs the error.
 
 ### Rust
 
 The crate is the tokenizer without the JavaScript layer. It reads the grammar
-files the npm package ships (`dist/grammars/*.json`, built by
+files the data build writes (`js/dist/grammars/*.json`, built by
 `js/scripts/build-grammars.mjs`) and returns tokens with style ids:
 
 ```rust
@@ -188,7 +209,11 @@ grammars of several languages for injections and embedded languages, and
 - **No time limit.** Shiki stops tokenizing a line after 500 ms by default
   (`tokenizeTimeLimit`) and leaves the rest unstyled; rill-highlight always
   tokenizes the whole line, so a pathological line can take long where Shiki
-  would give up. `tokenizeMaxLineLength` bounds that.
+  would give up. `tokenizeMaxLineLength` bounds that. Some grammars' patterns
+  backtrack quadratically on adversarial lines (a 4,000-character run of
+  spaces in TypeScript, of `(` in fish) in V8 and here alike; rill-highlight is
+  several times faster on them, but they grow the same way (tests/doubling.rs
+  lists them, and checks everything else grows linearly).
 - **One Shiki quirk.** On the mixed sample of the all-languages test, Shiki's
   first tokenization with a fresh C++ grammar misses a string that its later
   tokenizations (and rill-highlight) find; with two themes, Shiki's light and
@@ -238,7 +263,8 @@ same blocks again once loaded 122 ms against 43 ms (2.8x).
 - `js/scripts/build-grammars.mjs` takes Shiki's bundled grammars and
   translates every pattern they contain (and the anchor and back-reference
   variants the tokenizer can produce) with oniguruma-to-es, as Shiki's engine
-  would at runtime, into `dist/grammars/<name>.json`.
+  would at runtime, into `dist/grammars/<name>.json` (for the Rust crate)
+  and the same text as modules in `dist/data/` (what the package ships).
 - `src/regex/` is an ECMAScript regex engine (`u` and `v` modes, lookbehind,
   modifiers, Unicode properties from V8's tables) with oniguruma-to-es's
   `EmulatedRegExp` extensions. It reproduces V8's results, including a V8
@@ -258,6 +284,8 @@ commits) and `npm run build`:
 npm test                    # API, tokens, HTML and streaming vs Shiki
 npm run test:all-languages  # every bundled language on a mixed sample
 npm run test:pack           # pack, install the tarball, highlight from it
+npm run test:bundle         # the tarball bundled by Vite and bun, in Chromium
+cargo test --release --features op-counts --test doubling  # linear work
 cargo test                  # in the repository root: regex semantics, units, every pattern compiles
 ```
 

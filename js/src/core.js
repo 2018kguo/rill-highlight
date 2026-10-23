@@ -6,31 +6,33 @@
 //
 // `wasm`: a WebAssembly.Module, ArrayBuffer/Uint8Array, Response, or URL/string
 // (or a promise of one).
-// `data`: { grammar(name), theme(name) }, each returning the JSON text (or a
-// promise of it) of dist/grammars/<name>.json and dist/themes/<name>.json.
-// Instead of `wasm` and `data`, `baseUrl` points at a hosted copy of dist/.
+// `data`: { grammar(name), theme(name) }, each returning the JSON text of a
+// bundled grammar or theme (or a promise of it); `@2018kguo/rill-highlight/data`
+// exports the package's. Instead of `wasm` and `data`, `baseUrl` points at a
+// hosted copy of dist/.
 import manifest from '../dist/manifest.js';
 import { createHighlighterWithCore } from './highlighter.js';
 
 async function instantiate(wasm) {
   wasm = await wasm;
   if (wasm instanceof WebAssembly.Module) return WebAssembly.instantiate(wasm, {});
-  if (typeof Response !== 'undefined' && wasm instanceof Response) wasm = await wasm.arrayBuffer();
-  else if (wasm instanceof URL || typeof wasm === 'string') wasm = await (await fetch(wasm)).arrayBuffer();
+  if (wasm instanceof URL || typeof wasm === 'string') wasm = await fetch(wasm);
+  if (typeof Response !== 'undefined' && wasm instanceof Response) {
+    // A bundler that does not emit `new URL('../dist/rill_highlight.wasm', import.meta.url)`
+    // as an asset (bun) leaves a URL that is not served: say so.
+    if (!wasm.ok) throw new Error(`[rill-highlight] ${wasm.status} fetching ${wasm.url}: serve the package's dist/rill_highlight.wasm and pass its URL as \`wasm\` to createHighlightCore`);
+    wasm = await wasm.arrayBuffer();
+  }
   return (await WebAssembly.instantiate(wasm, {})).instance;
 }
 
-/** Fetches dist/ files from `baseUrl`. */
+/** Loads dist/ files from `baseUrl` (the data modules with dynamic imports). */
 export function dataFromBaseUrl(baseUrl) {
   const base = new URL(baseUrl, typeof location === 'undefined' ? undefined : location.href);
-  const text = async (path) => {
-    const response = await fetch(new URL(path, base));
-    if (!response.ok) throw new Error(`[rill-highlight] ${response.status} fetching ${response.url}`);
-    return response.text();
-  };
+  const text = async (path) => (await import(/* @vite-ignore */ /* webpackIgnore: true */ new URL(path, base).href)).default;
   return {
     wasm: new URL('rill_highlight.wasm', base),
-    data: { grammar: (name) => text(`grammars/${name}.json`), theme: (name) => text(`themes/${name}.json`) },
+    data: { grammar: (name) => text(`data/grammars/${name}.js`), theme: (name) => text(`data/themes/${name}.js`) },
   };
 }
 

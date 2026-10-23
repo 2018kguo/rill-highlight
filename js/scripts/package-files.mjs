@@ -41,7 +41,7 @@ ${ported.map(([name, file, what]) => `### ${name} ${version(name)}\n\n${what}\n\
 
 ## Grammars
 
-The ${names('dist/grammars').length} grammars in dist/grammars/ are Shiki ${version('shiki')}'s bundled
+The ${names('dist/grammars').length} grammars in dist/data/grammars/ are Shiki ${version('shiki')}'s bundled
 grammars, from tm-grammars ${version('tm-grammars')}, converted (their patterns translated
 to JavaScript syntax). Each keeps its own license, listed here from
 tm-grammars' metadata; the license texts are in notices/tm-grammars-NOTICE (in
@@ -55,7 +55,7 @@ ${names('dist/grammars').map((name) => row(name, byName.get(name))).join('\n')}
 
 ## Themes
 
-The ${names('dist/themes').length} themes in dist/themes/ are Shiki ${version('shiki')}'s bundled themes, from
+The ${names('dist/themes').length} themes in dist/data/themes/ are Shiki ${version('shiki')}'s bundled themes, from
 tm-themes ${version('tm-themes')}, unchanged. The license texts are in
 notices/tm-themes-NOTICE.
 

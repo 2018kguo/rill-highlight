@@ -155,6 +155,21 @@ test('loading a loaded theme again keeps its wasm highlighters', async () => {
   assert.equal(created, 1);
 });
 
+test('the Streamdown plugin loads a language, or rejects', async () => {
+  const { createCodePlugin } = await import('../src/streamdown.js');
+  const { data } = await import('../src/data.js');
+  const plugin = createCodePlugin({ core: rill.createHighlightCore({ wasm: (await import('node:fs/promises')).readFile(new URL('../dist/rill_highlight.wasm', import.meta.url)), data }) });
+  const themes = ['github-light', 'github-dark'];
+  assert.equal(plugin.highlightSync({ code: 'let x', language: 'ts', themes }), null, 'not loaded yet');
+  await plugin.load({ language: 'ts', themes });
+  const result = plugin.highlightSync({ code: 'let x', language: 'ts', themes });
+  assert.ok(result && result.tokens[0].length > 1);
+  await plugin.load({ language: 'no-such-language', themes });
+  assert.ok(plugin.highlightSync({ code: 'x', language: 'no-such-language', themes }), 'unknown languages are plain text');
+  await assert.rejects(plugin.load({ language: 'ts', themes: ['github-light', 'no-such-theme'] }), /not included in this bundle/);
+  await assert.rejects(data.grammar('no-such-grammar'), /no bundled data/);
+});
+
 let failed = 0;
 for (const { name, run } of cases) {
   try {

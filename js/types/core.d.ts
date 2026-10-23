@@ -129,9 +129,9 @@ export interface Highlighter {
 
 /** Where the wasm module and the data files come from. */
 export interface DataSource {
-  /** The JSON text of dist/grammars/<name>.json. */
+  /** The JSON text of a bundled grammar (see `@2018kguo/rill-highlight/data`). */
   grammar(name: string): string | Promise<string>;
-  /** The JSON text of dist/themes/<name>.json. */
+  /** The JSON text of a bundled theme. */
   theme(name: string): string | Promise<string>;
 }
 
