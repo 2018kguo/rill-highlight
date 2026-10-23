@@ -5,6 +5,11 @@ import { existsSync, readFileSync } from 'node:fs';
 const here = new URL('..', import.meta.url).pathname;
 
 export const ci = process.argv.includes('--ci');
+
+// Node flags for the processes that run Shiki as the reference: tokenize every
+// line to the end, so the reference does not depend on the machine's speed
+// (test/no-time-limit.mjs).
+export const referenceFlags = ['--import', here + 'test/no-time-limit.mjs'];
 export const wanted = process.argv.slice(2).filter((argument) => !argument.startsWith('--'));
 
 const read = (dir) => (existsSync(here + dir + 'index.json') ? JSON.parse(readFileSync(here + dir + 'index.json', 'utf8')).map((entry) => ({ lang: entry.lang, path: here + dir + entry.file })) : []);

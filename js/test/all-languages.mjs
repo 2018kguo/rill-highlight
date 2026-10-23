@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { bundledLanguagesInfo } from 'shiki';
 import { createHighlighter } from '../src/index.js';
+import { referenceFlags } from './corpus.mjs';
 
 const here = new URL('..', import.meta.url).pathname;
 const index = JSON.parse(readFileSync(here + 'corpus/files/index.json', 'utf8'));
@@ -21,10 +22,10 @@ const results = { exact: [], mismatch: [], error: [] };
 for (const id of ids) {
   let got, want, html;
   try {
-    want = JSON.parse(execFileSync('node', [here + 'test/reference.mjs', id, samplePath], { maxBuffer: 1 << 30 }).toString());
+    want = JSON.parse(execFileSync('node', [...referenceFlags, here + 'test/reference.mjs', id, samplePath], { maxBuffer: 1 << 30 }).toString());
     const highlighter = await createHighlighter({ themes: Object.values(themes), langs: [id] });
     got = highlighter.codeToTokens(sample, { lang: id, themes }).tokens.map((line) => line.map((t) => [t.content, t.offset, t.htmlStyle]));
-    html = [highlighter.codeToHtml(sample, { lang: id, theme: 'github-dark' }), execFileSync('node', ['-e', `import('shiki').then(async ({ createHighlighter, createJavaScriptRegexEngine }) => { const h = await createHighlighter({ themes: ['github-dark'], langs: [${JSON.stringify(id)}], engine: createJavaScriptRegexEngine({ forgiving: true }) }); process.stdout.write(h.codeToHtml(require('fs').readFileSync(${JSON.stringify(samplePath)}, 'utf8'), { lang: ${JSON.stringify(id)}, theme: 'github-dark' })); })`], { maxBuffer: 1 << 30 }).toString()];
+    html = [highlighter.codeToHtml(sample, { lang: id, theme: 'github-dark' }), execFileSync('node', [...referenceFlags, '-e', `import('shiki').then(async ({ createHighlighter, createJavaScriptRegexEngine }) => { const h = await createHighlighter({ themes: ['github-dark'], langs: [${JSON.stringify(id)}], engine: createJavaScriptRegexEngine({ forgiving: true }) }); process.stdout.write(h.codeToHtml(require('fs').readFileSync(${JSON.stringify(samplePath)}, 'utf8'), { lang: ${JSON.stringify(id)}, theme: 'github-dark' })); })`], { maxBuffer: 1 << 30 }).toString()];
     highlighter.dispose();
   } catch (error) {
     results.error.push(`${id}: ${String(error).slice(0, 200)}`);

@@ -9,7 +9,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createHighlighter } from '../src/index.js';
-import { corpusEntries, languagesOf } from './corpus.mjs';
+import { corpusEntries, languagesOf, referenceFlags } from './corpus.mjs';
 
 const here = new URL('..', import.meta.url).pathname;
 const entries = corpusEntries();
@@ -21,7 +21,7 @@ for (const lang of languagesOf(entries)) {
   const highlighter = await createHighlighter({ themes: Object.values(themes), langs: [lang] });
   let lines = 0, tokens = 0, badLines = 0, shown = 0;
   for (const file of files) {
-    const want = JSON.parse(execFileSync('node', [here + 'test/reference.mjs', lang, file], { maxBuffer: 1 << 30 }).toString());
+    const want = JSON.parse(execFileSync('node', [...referenceFlags, here + 'test/reference.mjs', lang, file], { maxBuffer: 1 << 30 }).toString());
     const result = highlighter.codeToTokens(readFileSync(file, 'utf8'), { lang, themes });
     const got = result.tokens.map((line) => line.map((token) => [token.content, token.offset, token.htmlStyle]));
     for (const key of ['fg', 'bg', 'themeName']) if (want[key] !== result[key]) { console.log(`${lang}: ${key} ${result[key]} != ${want[key]}`); badLines++; }

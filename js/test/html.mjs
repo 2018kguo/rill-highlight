@@ -8,7 +8,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createHighlighter } from '../src/index.js';
-import { corpusEntries, languagesOf } from './corpus.mjs';
+import { corpusEntries, languagesOf, referenceFlags } from './corpus.mjs';
 import { EXTRA_MAX_LINES, modes, themesOf } from './html-modes.mjs';
 
 const here = new URL('..', import.meta.url).pathname;
@@ -19,7 +19,7 @@ for (const lang of languagesOf(entries)) {
   let calls = 0, identical = 0, bytes = 0, shown = 0;
   for (const { path } of entries.filter((entry) => entry.lang === lang)) {
     const code = readFileSync(path, 'utf8');
-    const want = JSON.parse(execFileSync('node', [here + 'test/html-reference.mjs', lang, path], { maxBuffer: 1 << 30 }).toString());
+    const want = JSON.parse(execFileSync('node', [...referenceFlags, here + 'test/html-reference.mjs', lang, path], { maxBuffer: 1 << 30 }).toString());
     const list = modes(lang).slice(0, code.split('\n').length <= EXTRA_MAX_LINES ? undefined : 2);
     list.forEach((options, index) => {
       let got;

@@ -2,13 +2,13 @@
 // @streamdown/code's, on every streamed prefix of corpus files (first MAX_LINES
 // lines of each), per language.   node test/streaming.mjs [--ci] [LANG...]
 import { execFileSync } from 'node:child_process';
-import { corpusEntries, languagesOf } from './corpus.mjs';
+import { corpusEntries, languagesOf, referenceFlags } from './corpus.mjs';
 
 const here = new URL('..', import.meta.url).pathname;
 const maxLines = process.env.MAX_LINES ?? '150';
 const entries = corpusEntries();
 const langs = languagesOf(entries);
-const run = (engine, lang, files) => execFileSync('node', [here + 'test/stream-run.mjs', lang, maxLines, ...files], { env: { ...process.env, ENGINE: engine }, maxBuffer: 2 ** 31 }).toString().trim().split('\n');
+const run = (engine, lang, files) => execFileSync('node', [...(engine === 'shiki' ? referenceFlags : []), here + 'test/stream-run.mjs', lang, maxLines, ...files], { env: { ...process.env, ENGINE: engine }, maxBuffer: 2 ** 31 }).toString().trim().split('\n');
 const summary = [];
 let exact = true;
 for (const lang of langs) {

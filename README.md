@@ -26,8 +26,9 @@ same growing code block many times a second.
   only, three themes, `light-dark()`, the whitespace and merge options,
   `structure: 'inline'` and `tokenizeMaxLineLength`. Streaming the first 150
   lines of each file through the Streamdown plugin, 32,320 calls, matches
-  `@streamdown/code`, and 240 of 242 bundled languages match on a mixed
-  sample (the other two are a Shiki quirk, see [Limits](#limits)).
+  `@streamdown/code`, and all 242 bundled languages match on a mixed
+  sample. (The tests run Shiki without its per-line time limit, see
+  [Limits](#limits).)
 - **Faster.** In Node, 4.6x faster than Shiki at `codeToTokens`, 4.9x at
   `codeToHtml` and 5.5x to the first result, and in Chromium 5x to 6x on
   streamed and freshly loaded answers (numbers under
@@ -209,17 +210,13 @@ grammars of several languages for injections and embedded languages, and
 - **No time limit.** Shiki stops tokenizing a line after 500 ms by default
   (`tokenizeTimeLimit`) and leaves the rest unstyled; rill-highlight always
   tokenizes the whole line, so a pathological line can take long where Shiki
-  would give up. `tokenizeMaxLineLength` bounds that. Some grammars' patterns
+  would give up. `tokenizeMaxLineLength` bounds that. A cold grammar's first
+  lines can pass the limit in Shiki on a slow or busy machine, so Shiki's
+  tokens there vary by machine; the tests run Shiki without the limit. Some grammars' patterns
   backtrack quadratically on adversarial lines (a 4,000-character run of
   spaces in TypeScript, of `(` in fish) in V8 and here alike; rill-highlight is
   several times faster on them, but they grow the same way (tests/doubling.rs
   lists them, and checks everything else grows linearly).
-- **One Shiki quirk.** On the mixed sample of the all-languages test, Shiki's
-  first tokenization with a fresh C++ grammar misses a string that its later
-  tokenizations (and rill-highlight) find; with two themes, Shiki's light and
-  dark tokens disagree there. Its Emacs Lisp tokens disagree the same way on
-  one line (with Node 25.9; rill-highlight's tokens are the same in both
-  themes).
 - **Grammar states** come from the highlighter and the themes that produced
   them; passing one to a call with other themes throws.
 - **Loading after use.** Like Shiki, loading a language reloads the
