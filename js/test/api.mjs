@@ -129,6 +129,11 @@ test('unsupported options throw', async () => {
   const states = await rill.createHighlighter({ themes: ['nord', 'monokai'], langs: ['python'] });
   const { grammarState } = states.codeToTokens('x', { lang: 'python', themes: { a: 'nord', b: 'monokai' }, defaultColor: false });
   assert.throws(() => states.codeToTokens('y', { lang: 'python', theme: 'nord', grammarState }), /is not supported/);
+  // A state from before its language was reloaded (Markdown embeds Python lazily).
+  const reloaded = await rill.createHighlighter({ themes: ['nord'], langs: ['markdown'] });
+  const before = reloaded.codeToTokens('```python\n', { lang: 'markdown', theme: 'nord' }).grammarState;
+  await reloaded.loadLanguage('python');
+  assert.throws(() => reloaded.codeToTokens('x = 1', { lang: 'markdown', theme: 'nord', grammarState: before }), /is not supported/);
 });
 
 test('loading a loaded theme again keeps its wasm highlighters', async () => {
