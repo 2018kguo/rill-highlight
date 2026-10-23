@@ -2,6 +2,7 @@
 
 use super::compile::{Inst, Program};
 use super::parse::Assertion;
+use crate::fxhash::FxHashMap;
 
 #[derive(Debug, Clone, Copy)]
 enum Frame {
@@ -21,11 +22,56 @@ enum Frame {
     LazyStar { pc: u32, pos: u32, remaining: u32 },
 }
 
+/// Where a required literal next occurs in an input, searched from `from`
+/// (`None`: nowhere at or after `from`).
+#[derive(Debug, Clone, Copy)]
+struct LiteralScan {
+    from: usize,
+    next: Option<usize>,
+}
+
+/// Literal scans kept before the cache starts over.
+const MAX_LITERAL_SCANS: usize = 4096;
+
 /// Reusable matcher state.
 #[derive(Default)]
 pub struct Matcher {
     stack: Vec<Frame>,
     loops: Vec<(u32, u32)>,
+    /// The caller's identifier for the input the next searches run on (see
+    /// `set_input_id`).
+    input_id: Option<u64>,
+    /// Required-literal scans by (literal address, input id, input length).
+    literal_scans: FxHashMap<(usize, u64, usize), LiteralScan>,
+}
+
+impl Matcher {
+    /// Declares that the following searches run on the input identified by `id`
+    /// (the same content for as long as the id is in use), so the matcher can
+    /// remember where required literals occur instead of scanning for them on
+    /// every search. Without an id (the default) nothing is remembered.
+    pub fn set_input_id(&mut self, id: Option<u64>) {
+        self.input_id = id;
+    }
+
+    /// Whether `literal` occurs in `input` at or after `pos`.
+    fn has_literal(&mut self, literal: &[(u16, u16)], input: &[u16], pos: usize) -> bool {
+        let Some(id) = self.input_id else { return find_literal(&input[pos..], literal).is_some() };
+        let key = (literal.as_ptr() as usize, id, input.len());
+        if let Some(scan) = self.literal_scans.get(&key) {
+            match scan.next {
+                None if pos >= scan.from => return false,
+                Some(next) if next >= pos => return true,
+                _ => {}
+            }
+        }
+        let next = find_literal(&input[pos..], literal).map(|index| index + pos);
+        if self.literal_scans.len() >= MAX_LITERAL_SCANS {
+            self.literal_scans.clear();
+        }
+        self.literal_scans.insert(key, LiteralScan { from: pos, next });
+        next.is_some()
+    }
 }
 
 #[inline]
@@ -121,7 +167,7 @@ impl Matcher {
             pos -= 1;
         }
         if let Some(literal) = &program.required_literal
-            && find_literal(&input[pos..], literal).is_none()
+            && !self.has_literal(literal, input, pos)
         {
             return false;
         }
@@ -585,5 +631,32 @@ impl Matcher {
             }
             Some(right)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Matcher;
+    use crate::regex::{EmulationOptions, JsRegExp};
+
+    #[test]
+    fn remembers_where_a_required_literal_is_missing() {
+        // Searching a long line for a keyword it lacks, from every token, must not
+        // rescan the line each time (that made long lines quadratic).
+        let regex = JsRegExp::new("\\btypeof\\b", "dgv", &EmulationOptions::default()).expect("regex");
+        let input: Vec<u16> = "\"item\", ".repeat(2000).encode_utf16().collect();
+        let mut matcher = Matcher::default();
+        matcher.set_input_id(Some(1));
+        let (mut raw, mut result) = (Vec::new(), Vec::new());
+        for start in (0..input.len()).step_by(8) {
+            assert!(!regex.exec_bounded(&mut matcher, &input, start, start + 2, &mut raw, &mut result));
+        }
+        let scans: Vec<_> = matcher.literal_scans.values().collect();
+        assert_eq!(scans.len(), 1);
+        assert_eq!((scans[0].from, scans[0].next), (0, None), "one scan, from the first search");
+        // A different input id is a different input.
+        matcher.set_input_id(Some(2));
+        let other: Vec<u16> = "x typeof y".encode_utf16().collect();
+        assert!(regex.exec(&mut matcher, &other, 0, &mut raw, &mut result));
     }
 }

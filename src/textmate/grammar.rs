@@ -891,6 +891,7 @@ impl Grammar {
                     search_from = entry.searched_to + 1;
                 }
                 self.execs += 1;
+                self.matcher.set_input_id(Some(string.id));
                 let found = regex.exec_bounded(&mut self.matcher, &string.content, search_from, limit, &mut self.raw_captures, &mut self.exec_result);
                 let entry = &mut self.search_cache[regex_index];
                 if search_from == start {
