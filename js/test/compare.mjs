@@ -31,7 +31,14 @@ for (const lang of languagesOf(entries)) {
       const a = JSON.stringify(want.tokens[line]), b = JSON.stringify(got[line]);
       if (a !== b) {
         badLines++;
-        if (shown++ < 3) console.log(`${lang} ${file.split('/').pop()}:${line + 1}\n  want ${a?.slice(0, 600)}\n  got  ${b?.slice(0, 600)}`);
+        if (shown++ < 3) {
+          // The first token that differs, with one token either side.
+          const w = want.tokens[line] ?? [], g = got[line] ?? [];
+          let at = 0;
+          while (at < Math.max(w.length, g.length) && JSON.stringify(w[at]) === JSON.stringify(g[at])) at++;
+          const around = (list) => JSON.stringify(list.slice(Math.max(0, at - 1), at + 2));
+          console.log(`${lang} ${file.split('/').pop()}:${line + 1} token ${at}\n  want ${around(w)}\n  got  ${around(g)}`);
+        }
       }
     }
   }
