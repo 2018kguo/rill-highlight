@@ -1,7 +1,7 @@
 //! Themes: Shiki's `normalizeTheme` and vscode-textmate's theme trie.
 
 use crate::fxhash::FxHashMap as HashMap;
-use serde_json::{Map, Value, json};
+use crate::json::{Map, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -28,13 +28,13 @@ fn non_empty(value: Option<&Value>) -> Option<String> {
 
 /// Shiki `normalizeTheme`.
 pub fn normalize_theme(raw: &Value) -> Result<NormalizedTheme, String> {
-    let mut theme: Map<String, Value> = raw.as_object().ok_or("theme is not an object")?.clone();
+    let mut theme: Map = raw.as_object().ok_or("theme is not an object")?.clone();
     if theme.contains_key("tokenColors") && !truthy(theme.get("settings")) {
         let token_colors = theme.remove("tokenColors").expect("checked tokenColors");
         theme.insert("settings".into(), token_colors);
     }
     let theme_type = non_empty(theme.get("type")).unwrap_or_else(|| "dark".into());
-    let mut color_replacements: Map<String, Value> = match theme.get("colorReplacements") {
+    let mut color_replacements: Map = match theme.get("colorReplacements") {
         Some(Value::Object(map)) => map.clone(),
         _ => Map::new(),
     };
@@ -44,7 +44,7 @@ pub fn normalize_theme(raw: &Value) -> Result<NormalizedTheme, String> {
     };
     let mut fg = non_empty(theme.get("fg"));
     let mut bg = non_empty(theme.get("bg"));
-    let mut colors: Map<String, Value> = match theme.get("colors") {
+    let mut colors: Map = match theme.get("colors") {
         Some(Value::Object(map)) => map.clone(),
         _ => Map::new(),
     };
@@ -76,12 +76,17 @@ pub fn normalize_theme(raw: &Value) -> Result<NormalizedTheme, String> {
     let bg = bg.expect("a fallback background");
     let first_is_global = settings.first().is_some_and(|s| truthy(s.get("settings")) && !truthy(s.get("scope")));
     if !first_is_global {
-        settings.insert(0, json!({ "settings": { "foreground": fg, "background": bg } }));
+        let mut colors = Map::new();
+        colors.insert("foreground".into(), Value::String(fg.clone()));
+        colors.insert("background".into(), Value::String(bg.clone()));
+        let mut global = Map::new();
+        global.insert("settings".into(), Value::Object(colors));
+        settings.insert(0, Value::Object(global));
     }
     // Colors that are not hex get placeholder hex colors, replaced back on output.
     let mut replacement_count = 0u32;
     let mut replacement_map: HashMap<String, String> = HashMap::default();
-    let mut replacement_for = |value: &str, replacements: &Map<String, Value>| -> String {
+    let mut replacement_for = |value: &str, replacements: &Map| -> String {
         if let Some(hex) = replacement_map.get(value) {
             return hex.clone();
         }
@@ -116,7 +121,7 @@ pub fn normalize_theme(raw: &Value) -> Result<NormalizedTheme, String> {
     let keys: Vec<String> = colors.keys().cloned().collect();
     for key in keys {
         if key == "editor.foreground" || key == "editor.background" || key.starts_with("terminal.ansi") {
-            let value = colors[&key].as_str().unwrap_or("").to_string();
+            let value = colors[key.as_str()].as_str().unwrap_or("").to_string();
             if !value.starts_with('#') {
                 let hex = replacement_for(&value, &color_replacements);
                 color_replacements.insert(hex.clone(), Value::String(value));
@@ -135,13 +140,7 @@ pub fn normalize_theme(raw: &Value) -> Result<NormalizedTheme, String> {
 }
 
 fn truthy(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0),
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(_) => true,
-    }
+    value.is_some_and(Value::truthy)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +226,7 @@ impl TrieElement {
         }
         let mut rules = self.rules_with_parent_scopes.clone();
         rules.push(self.main_rule.clone());
-        rules.sort_by(cmp_by_specificity);
+        crate::sort::sort_by(&mut rules, cmp_by_specificity);
         rules
     }
 
@@ -304,7 +303,7 @@ fn js_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 impl Theme {
     pub fn new(settings: &[Value]) -> Theme {
         let mut parsed = parse_theme(settings);
-        parsed.sort_by(|a, b| {
+        crate::sort::sort_by(&mut parsed, |a, b| {
             js_cmp(&a.scope, &b.scope)
                 .then_with(|| match (&a.parent_scopes, &b.parent_scopes) {
                     (None, None) => std::cmp::Ordering::Equal,

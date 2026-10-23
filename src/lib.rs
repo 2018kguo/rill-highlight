@@ -23,9 +23,11 @@
 
 mod fxhash;
 mod highlighter;
+mod json;
 #[doc(hidden)]
 pub mod ops;
 pub mod regex;
+mod sort;
 mod textmate;
 
 pub use highlighter::{Error, Highlighter, MAX_THEMES, Registry, State, Theme, ThemeStyle, Token, Tokenized};

@@ -668,7 +668,7 @@ impl Grammar {
                 injections.push(Injection { matcher: matcher.matcher, rule_id, priority: matcher.priority });
             }
         }
-        injections.sort_by_key(|i| i.priority);
+        crate::sort::sort_by(&mut injections, |a, b| a.priority.cmp(&b.priority));
         self.injections = injections;
         Ok(())
     }

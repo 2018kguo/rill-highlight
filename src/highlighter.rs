@@ -2,12 +2,12 @@
 //! themes in one pass: the grammar matches once and every theme styles the result.
 
 use crate::fxhash::FxHashMap;
+use crate::json::{self, Value};
 use crate::regex::EmulationOptions;
 use crate::textmate::grammar::{self, Grammar, Translation};
 use crate::textmate::raw::RawGrammar;
 use crate::textmate::theme::{NormalizedTheme, Theme as TextmateTheme, normalize_theme};
 use crate::textmate::tokenizer::{self, Tokenizer};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
@@ -108,7 +108,7 @@ impl Theme {
     /// # Errors
     /// When the text is not a theme object.
     pub fn from_json(text: &str) -> Result<Self, Error> {
-        let value: Value = serde_json::from_str(text).map_err(|error| Error::new(error.to_string()))?;
+        let value = json::parse(text).map_err(Error::new)?;
         let normalized = normalize_theme(&value)?;
         let textmate = TextmateTheme::new(&normalized.settings);
         Ok(Self { normalized, textmate })
@@ -357,17 +357,28 @@ fn split_lines(code: &[u16]) -> Vec<(usize, usize)> {
 /// Oniguruma sources and their translations (`None`: skipped).
 type Translations = Vec<(Rc<str>, Option<Translation>)>;
 
-/// One grammar file of the data build (`{ grammar, regexes }`).
+/// The flags oniguruma-to-es gives nearly every translation.
+const DEFAULT_FLAGS: &str = "dgv";
+
+/// One grammar file of the data build (`{ grammar, regexes }`). `regexes` maps
+/// each source to `[pattern, flags, options]`, to the pattern alone (flags
+/// `dgv`, no options), to `0` (the source is the pattern), or to `null`
+/// (skipped).
 fn parse_grammar_file(text: &str) -> Result<(RawGrammar, Translations), Error> {
-    let value: Value = serde_json::from_str(text).map_err(|error| Error::new(error.to_string()))?;
+    let value = json::parse(text).map_err(Error::new)?;
     let grammar = RawGrammar::from_json(&value["grammar"])?;
     let numbers = |value: &Value| -> Vec<u32> {
         value.as_array().map(|items| items.iter().filter_map(|item| item.as_u64().map(|n| n as u32)).collect()).unwrap_or_default()
     };
     let mut translations = Vec::new();
     if let Value::Object(regexes) = &value["regexes"] {
-        for (source, translation) in regexes {
+        for (source, translation) in regexes.iter() {
+            let plain = |pattern: &str| Translation { pattern: Rc::from(pattern), flags: Rc::from(DEFAULT_FLAGS), options: EmulationOptions::default() };
             let translation = match translation {
+                // The common cases, written short by the data build: the source
+                // itself, or a pattern, with the default flags and no options.
+                Value::Number(_) => Some(plain(source)),
+                Value::String(pattern) => Some(plain(pattern)),
                 Value::Array(parts) => {
                     let options = &parts[2];
                     Some(Translation {

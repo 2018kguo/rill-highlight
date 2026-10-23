@@ -1,7 +1,7 @@
 //! Raw TextMate grammars: the JSON rule objects, flattened into an arena so rules
 //! can be referred to (and their compiled ids cached) by index.
 
-use serde_json::{Map, Value};
+use crate::json::{Map, Value};
 use std::rc::Rc;
 
 /// The root object of a grammar.
@@ -52,21 +52,15 @@ fn string(value: Option<&Value>) -> Option<Rc<str>> {
 
 /// JavaScript truthiness of a JSON value.
 fn truthy(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0 && !f.is_nan()),
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(_) => true,
-    }
+    value.is_some_and(Value::truthy)
 }
 
 /// Object keys in JavaScript property order: integer-like keys ascending, then the
 /// others in insertion order.
-fn js_ordered(map: &Map<String, Value>) -> Vec<(&String, &Value)> {
+fn js_ordered(map: &Map) -> Vec<(&String, &Value)> {
     let is_index = |k: &str| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()) && (k == "0" || !k.starts_with('0')) && k.len() < 10;
     let mut indices: Vec<(&String, &Value)> = map.iter().filter(|(k, _)| is_index(k)).collect();
-    indices.sort_by_key(|(k, _)| k.parse::<u64>().expect("an index key"));
+    crate::sort::sort_by(&mut indices, |(a, _), (b, _)| a.parse::<u64>().expect("an index key").cmp(&b.parse::<u64>().expect("an index key")));
     indices.extend(map.iter().filter(|(k, _)| !is_index(k)));
     indices
 }
@@ -100,7 +94,7 @@ impl RawGrammar {
         Ok(grammar)
     }
 
-    fn add_rule(&mut self, object: &Map<String, Value>) -> u32 {
+    fn add_rule(&mut self, object: &Map) -> u32 {
         let index = self.nodes.len() as u32;
         self.nodes.push(RawRule::default());
         let rule = self.read_rule(object);
@@ -108,7 +102,7 @@ impl RawGrammar {
         index
     }
 
-    fn read_rule(&mut self, object: &Map<String, Value>) -> RawRule {
+    fn read_rule(&mut self, object: &Map) -> RawRule {
         let mut rule = RawRule {
             name: string(object.get("name")),
             content_name: string(object.get("contentName")),

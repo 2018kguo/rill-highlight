@@ -6,8 +6,10 @@
 //! buffer (`rhl_text`, `rhl_text_len`) that the caller reads before the next call.
 
 use crate::highlighter::{Highlighter, Registry, State, Theme};
+use crate::json;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::rc::Rc;
 
 #[derive(Default)]
@@ -106,8 +108,22 @@ pub unsafe extern "C" fn rhl_theme_new(pointer: *const u8, length: usize) -> u32
     let text = unsafe { read_utf8(pointer, length) };
     EXPORTS.with_borrow_mut(|exports| match Theme::from_json(&text) {
         Ok(theme) => {
-            let info = (theme.name(), theme.theme_type(), theme.foreground(), theme.background(), theme.color_replacements());
-            exports.set_text(&serde_json::to_string(&info).unwrap_or_default());
+            let mut info = String::from("[");
+            for field in [theme.name(), theme.theme_type(), theme.foreground(), theme.background()] {
+                json::write_string(&mut info, field);
+                info.push(',');
+            }
+            info.push('{');
+            for (index, (from, to)) in theme.color_replacements().iter().enumerate() {
+                if index > 0 {
+                    info.push(',');
+                }
+                json::write_string(&mut info, from);
+                info.push(':');
+                json::write_string(&mut info, to);
+            }
+            info.push_str("}]");
+            exports.set_text(&info);
             let handle = exports.handle();
             exports.themes.insert(handle, Rc::new(theme));
             handle
@@ -212,8 +228,15 @@ pub extern "C" fn rhl_state_free(state: u32) {
 pub extern "C" fn rhl_state_scopes(state: u32) -> usize {
     EXPORTS.with_borrow_mut(|exports| {
         let scopes = exports.states.get(&state).map(State::scopes).unwrap_or_default();
-        let scopes: Vec<&str> = scopes.iter().map(|scope| &**scope).collect();
-        exports.set_text(&serde_json::to_string(&scopes).unwrap_or_default());
+        let mut text = String::from("[");
+        for (index, scope) in scopes.iter().enumerate() {
+            if index > 0 {
+                text.push(',');
+            }
+            json::write_string(&mut text, scope);
+        }
+        text.push(']');
+        exports.set_text(&text);
         exports.text.len()
     })
 }
@@ -224,9 +247,20 @@ pub extern "C" fn rhl_state_scopes(state: u32) -> usize {
 pub extern "C" fn rhl_styles(highlighter: u32, from: u32) -> usize {
     EXPORTS.with_borrow_mut(|exports| {
         let Some(target) = exports.highlighters.get(&highlighter) else { return 0 };
-        let styles: Vec<Vec<(Option<&str>, u32)>> =
-            target.styles()[from as usize..].iter().map(|style| style.iter().map(|theme| (theme.color.as_deref(), theme.font_style)).collect()).collect();
-        let text = serde_json::to_string(&styles).unwrap_or_default();
+        let mut text = String::from("[");
+        for (index, style) in target.styles()[from as usize..].iter().enumerate() {
+            text.push_str(if index > 0 { ",[" } else { "[" });
+            for (theme, look) in style.iter().enumerate() {
+                text.push_str(if theme > 0 { ",[" } else { "[" });
+                match look.color.as_deref() {
+                    Some(color) => json::write_string(&mut text, color),
+                    None => text.push_str("null"),
+                }
+                let _ = write!(text, ",{}]", look.font_style);
+            }
+            text.push(']');
+        }
+        text.push(']');
         exports.set_text(&text);
         exports.text.len()
     })

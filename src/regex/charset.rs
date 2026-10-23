@@ -162,7 +162,7 @@ impl CharSet {
     }
 
     fn normalize(&mut self) {
-        self.ranges.sort_unstable();
+        crate::sort::sort_by(&mut self.ranges, Ord::cmp);
         let mut merged: Vec<(u32, u32)> = Vec::with_capacity(self.ranges.len());
         for &(lo, hi) in &self.ranges {
             if let Some(last) = merged.last_mut()
@@ -194,7 +194,7 @@ fn folding() -> &'static Folding {
         }
         let classes: Vec<Vec<u32>> = by_representative.into_values().collect();
         let mut members: Vec<(u32, u32)> = classes.iter().enumerate().flat_map(|(i, class)| class.iter().map(move |&c| (c, i as u32))).collect();
-        members.sort_unstable();
+        crate::sort::sort_by(&mut members, Ord::cmp);
         Folding { members, classes }
     })
 }

@@ -16,6 +16,8 @@ include = ["/src", "/tests", "/examples", "/README.md", "/LICENSE", "/THIRD_PART
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+
+[dev-dependencies]
 serde_json = { version = "1.0", features = ["preserve_order"] }
 
 [features]
