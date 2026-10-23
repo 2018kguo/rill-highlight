@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (build, test and pack only, no publish)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # Trusted publishing: GitHub's OIDC token replaces npm and crates.io tokens.
+  id-token: write
+
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npm run test:ci
+      - name: Pack
+        if: inputs.dry_run
+        run: npm pack --ignore-scripts --dry-run
+      - name: Publish @2018kguo/rill-highlight
+        if: ${{ !inputs.dry_run }}
+        run: npm publish --ignore-scripts --provenance --access public
+
+  crate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+      - name: Package
+        if: inputs.dry_run
+        run: cargo publish --dry-run
+      - uses: rust-lang/crates-io-auth-action@v1
+        if: ${{ !inputs.dry_run }}
+        id: auth
+      - name: Publish rill-highlight
+        if: ${{ !inputs.dry_run }}
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
