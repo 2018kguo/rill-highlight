@@ -7,9 +7,7 @@ import { readFileSync } from 'node:fs';
 const [lang, maxLines, ...files] = process.argv.slice(2);
 let plugin;
 if (process.env.ENGINE === 'rill') {
-  const { createNodeHighlightCore } = await import('../js/node.js');
-  const { createCodePlugin } = await import('../js/code-plugin.js');
-  plugin = createCodePlugin({ core: await createNodeHighlightCore() });
+  plugin = (await import('../src/streamdown.js')).createCodePlugin();
 } else {
   plugin = (await import('@streamdown/code')).createCodePlugin();
 }
