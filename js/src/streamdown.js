@@ -96,7 +96,10 @@ export function createCodePlugin({ core, themes } = {}) {
       const newRows = completed.tokens;
       newRows.pop();
       shiftOffsets(newRows, prefix.length);
-      rows = rows.concat(newRows);
+      // In place: the state taken above is the only holder of `rows` (results get
+      // copies), and copying them for every finished line made streaming a long
+      // block quadratic in its line count.
+      for (const row of newRows) rows.push(row);
       grammarState = completed.grammarState;
       prefix = code.slice(0, lineEnd);
       storeIncrementalState(stateKey, { grammarState, prefix, rows });

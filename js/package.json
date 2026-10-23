@@ -61,8 +61,8 @@
   "scripts": {
     "corpus": "node corpus/fetch.mjs",
     "build": "node scripts/build-grammars.mjs && sh scripts/build-wasm.sh && node scripts/package-files.mjs",
-    "test": "node test/api.mjs && node test/compare.mjs && node test/html.mjs && node test/streaming.mjs",
-    "test:ci": "node test/api.mjs && node test/compare.mjs --ci && node test/html.mjs --ci && MAX_LINES=60 node test/streaming.mjs --ci typescript python markdown && node scripts/package-files.mjs && node test/pack.mjs",
+    "test": "node test/api.mjs && node test/compare.mjs && node test/html.mjs && node test/streaming.mjs && node test/doubling.mjs",
+    "test:ci": "node test/api.mjs && node test/doubling.mjs && node test/compare.mjs --ci && node test/html.mjs --ci && MAX_LINES=60 node test/streaming.mjs --ci typescript python markdown && node scripts/package-files.mjs && node test/pack.mjs",
     "test:all-languages": "node test/all-languages.mjs",
     "test:pack": "node scripts/package-files.mjs && node test/pack.mjs",
     "bench": "cargo build --release --example bench && node bench/native.mjs && node bench/wasm.mjs",
