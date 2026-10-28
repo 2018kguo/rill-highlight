@@ -1,21 +1,26 @@
-# rill-highlight
+<h1 align="center">rill-highlight</h1>
+<p align="center">Shiki-compatible syntax highlighting in Rust and WebAssembly.</p>
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#use">API</a> ·
+  <a href="#performance">Benchmarks</a> ·
+  <a href="#limits">Limits</a>
+</p>
 
-Shiki's syntax highlighting with the same tokens and the same HTML, computed
-by a Rust port of Shiki's TextMate tokenizer and of the JavaScript regex
-engine it runs on, compiled to WebAssembly. It is a drop-in for
-`createHighlighter`, `codeToHtml` and `codeToTokens` from
-[shiki](https://shiki.style) 4.5.0, and for the code plugin of
-[Streamdown](https://github.com/vercel/streamdown) (`@streamdown/code` 2.0.0).
+Highlight growing code blocks without changing their appearance.
+rill-highlight implements Shiki's TextMate tokenizer in Rust and exposes
+familiar JavaScript APIs through WebAssembly. It also supplies a Streamdown
+code plugin and the highlighter used by [rill](https://github.com/2018kguo/rill).
+
+The comparison below uses Shiki's JavaScript regex engine. Its default
+Oniguruma engine has some different results; see [limits](#limits) before
+replacing it. Supported dependency pins are in [js/package.json](js/package.json).
 
 ```js
 import { codeToHtml } from '@2018kguo/rill-highlight';
 
 const html = await codeToHtml('const answer = 42', { lang: 'ts', theme: 'github-dark' });
 ```
-
-It started as the code highlighter of [rill](https://github.com/2018kguo/rill),
-a Rust engine for Streamdown, which is why it is built for highlighting the
-same growing code block many times a second.
 
 ## Why
 
@@ -116,13 +121,13 @@ const code = createCodePlugin({ core });
 Web Worker with Vite and with bun, from the packed tarball, and checks it in
 Chromium. Without a bundler, serve the package's `dist/` directory (or use a
 CDN copy) and point a core at it; `/core` has no bare imports, so it also loads
-straight from a CDN:
+straight from a CDN. For a local copy, serve `dist/` at `/vendor/rill-highlight/`:
 
 ```js
 import { createHighlightCore } from '@2018kguo/rill-highlight/core';
 
 const core = await createHighlightCore({
-  baseUrl: 'https://cdn.jsdelivr.net/npm/@2018kguo/rill-highlight@0.1.0/dist/',
+  baseUrl: new URL('/vendor/rill-highlight/', location.href).href,
 });
 const highlighter = await core.createHighlighter({ themes: ['github-dark'], langs: ['ts'] });
 ```
@@ -227,7 +232,7 @@ grammars of several languages for injections and embedded languages, and
 ## Performance
 
 Measured with `npm run bench` in `js/` on an Apple M5 Pro (18 cores, macOS)
-with Node 25.9, on the corpus (the files of each of the 31 languages
+with Node, on the corpus (the files of each of the 31 languages
 concatenated, 1.4 MB in all), Shiki on its JavaScript regex engine, both with
 two themes (github-light and github-dark) as Streamdown uses them. Warm is
 the fastest of nine runs on a loaded highlighter, summed over the languages;
@@ -235,7 +240,7 @@ first result is a fresh process creating the highlighter for one language and
 highlighting once, summed. The machine was shared with other work, so single
 languages vary by up to about 20% between runs.
 
-| | Shiki 4.5.0 | rill-highlight (wasm) | |
+| | Shiki | rill-highlight (wasm) | |
 | --- | --- | --- | --- |
 | `codeToTokens`, warm | 1,730 ms | 378 ms | 4.6x |
 | `codeToHtml`, warm | 1,878 ms | 386 ms | 4.9x |
